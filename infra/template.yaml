@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: health-chat Web Function (Node.js 24, Cognito-protected, Bedrock model check). AWS-managed encryption only.
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [staging, production]
+  CodeBucket:
+    Type: String
+  CodeKey:
+    Type: String
+    Description: releases/<commit SHA>.zip in the artifact bucket.
+  BedrockModel:
+    # The single model setting. Change the default here and redeploy; deploy.mjs reads this default.
+    Type: String
+    Default: us.amazon.nova-2-lite-v1:0
+    AllowedPattern: "^(us|eu|jp|global)\\.[a-z0-9.-]+-v[0-9]+:[0-9]+$"
+  CognitoUserPool:
+    Type: String
+  CognitoDomain:
+    Type: String
+  CognitoClientId:
+    Type: String
+  SmokeClientId:
+    Type: String
+Resources:
+  WebLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/web/${AWS::StackName}
+      RetentionInDays: 30
+  WebLocalLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/web/${AWS::StackName}.local
+      RetentionInDays: 30
+  WebFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: Application
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/web/${AWS::StackName}:log-stream:*
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/web/${AWS::StackName}.local:log-stream:*
+              # The app may call only the configured inference profile. Foundation-model ARNs are
+              # usable only when the call comes through that profile (same rule as stuntman-diet).
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Sub arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/${BedrockModel}
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/*
+                Condition:
+                  StringLike:
+                    bedrock:InferenceProfileArn: !Sub arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/${BedrockModel}
+  WebFunction:
+    Type: AWS::Lambda::WebFunction
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}
+      Tags:
+        - Key: Application
+          Value: health-chat
+        - Key: Environment
+          Value: !Ref Environment
+  WebFunctionRevision:
+    Type: AWS::Lambda::WebFunctionRevision
+    DependsOn: WebLocalLogGroup
+    Properties:
+      FunctionName: !Ref WebFunction
+      Description: !Sub ${Environment} revision ${CodeKey}
+      ServiceConfig:
+        ExecutionRoleArn: !GetAtt WebFunctionRole.Arn
+        TimeoutSeconds: 60
+        MaxConcurrencyPerEnvironment: 8
+        TelemetryConfig:
+          LoggingConfig:
+            LogGroup: !Ref WebLogGroup
+            ApplicationLogLevel: INFO
+            SystemLogLevel: INFO
+        EnvironmentVariables:
+          NODE_ENV: production
+          BEDROCK_MODEL: !Ref BedrockModel
+          COGNITO_USER_POOL: !Ref CognitoUserPool
+          COGNITO_DOMAIN: !Ref CognitoDomain
+          COGNITO_CLIENT_ID: !Ref CognitoClientId
+          SMOKE_CLIENT_ID: !Ref SmokeClientId
+      BuildConfig:
+        RuntimeConfig:
+          Runtime: nodejs24.x
+        CodeConfig:
+          S3Object:
+            Bucket: !Ref CodeBucket
+            Key: !Ref CodeKey
+  WebFunctionEndpoint:
+    Type: AWS::Lambda::WebFunctionEndpoint
+    Properties:
+      FunctionName: !Ref WebFunction
+      EndpointName: !Ref Environment
+      EndpointType: HomeRegion
+      AuthType: ApplicationManaged
+      ScalingConfig:
+        MaxEnvironments: 2
+      RevisionWeights:
+        - RevisionId: !GetAtt WebFunctionRevision.RevisionId
+          Weight: 100
+Outputs:
+  WebFunctionUrl:
+    Value: !Sub https://${WebFunctionEndpoint.DomainName}
+  BedrockModelInUse:
+    Value: !Ref BedrockModel

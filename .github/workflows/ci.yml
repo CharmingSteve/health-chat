@@ -1,0 +1,151 @@
+name: CI and CloudFormation deployment
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      production:
+        description: Promote this revision after staging passes (production environment approval required)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: health-chat-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-and-package:
+    name: Verify tests and package release
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install, test, mutation check, build, and package
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test
+          npm run mutation
+          npm run build
+          npm run package
+      - name: Lint CloudFormation templates
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/cfn"
+          "$RUNNER_TEMP/cfn/bin/pip" install --quiet cfn-lint==1.60.1
+          "$RUNNER_TEMP/cfn/bin/cfn-lint" infra/template.yaml infra/auth.yaml infra/artifacts.yaml
+      - name: Upload immutable deployment ZIP
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: health-chat-web-function
+          path: dist/health-chat.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy-staging-and-smoke-test:
+    name: Deploy staging and run Cognito smoke tests
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: verify-and-package
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: staging
+    env:
+      AWS_REGION: us-east-1
+      AWS_PAGER: ""
+      BUILD_REVISION: ${{ github.sha }}
+    steps:
+      - name: Check out infrastructure
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: Download verified deployment ZIP
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: health-chat-web-function
+          path: dist
+      - name: Configure account-restricted AWS credentials
+        uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b5096b330d9fbac3d116df # v4.2.1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+          allowed-account-ids: "570989156105"
+      - name: Deploy staging
+        run: |
+          set -euo pipefail
+          node scripts/deploy.mjs staging
+      - name: Cognito smoke tests (staging)
+        run: |
+          set -euo pipefail
+          node scripts/cloud-smoke.mjs health-chat-staging
+
+  deploy-production:
+    name: Promote approved release to production
+    permissions:
+      contents: read
+      actions: read # Read environment protection settings for the production gate.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.production))
+    needs: deploy-staging-and-smoke-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Required reviewers and main-only deployment are configured in repository settings and verified below.
+    environment: production
+    env:
+      AWS_REGION: us-east-1
+      AWS_PAGER: ""
+      BUILD_REVISION: ${{ github.sha }}
+    steps:
+      - name: Check out approved revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: Download same staging-tested deployment ZIP
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: health-chat-web-function
+          path: dist
+      - name: Fail closed unless production approval and branch protections are configured
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/verify-production-gate.mjs
+      - name: Configure account-restricted AWS credentials
+        uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b5096b330d9fbac3d116df # v4.2.1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+          allowed-account-ids: "570989156105"
+      - name: Deploy production
+        run: |
+          set -euo pipefail
+          node scripts/deploy.mjs production
+      - name: Cognito smoke tests (production)
+        run: |
+          set -euo pipefail
+          node scripts/cloud-smoke.mjs health-chat-production

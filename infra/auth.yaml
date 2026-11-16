@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  health-chat app clients in the EXISTING stuntman-diet Cognito user pool (same login).
+  Creates only: a browser client with its own callback URL, and a machine smoke client
+  limited to the health-smoke/query scope. Does not change the user pool itself.
+Parameters:
+  UserPoolId:
+    Type: String
+    Description: The stuntman-diet pool for this environment (CognitoUserPool output of its -auth stack).
+    AllowedPattern: ^[a-z0-9-]+_[A-Za-z0-9]+$
+  CallbackUrl:
+    Type: String
+    Default: http://localhost:3000/
+    AllowedPattern: ^(http://localhost:3000/|https://[a-z0-9.-]+/)$
+Resources:
+  SmokeScopes:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref UserPoolId
+      Identifier: health-smoke
+      Name: health-chat smoke checks
+      Scopes:
+        - ScopeName: query
+          ScopeDescription: Fixed model check only; touches no health data
+  BrowserClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPoolId
+      ClientName: health-chat-browser
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - !Ref CallbackUrl
+      LogoutURLs:
+        - !Ref CallbackUrl
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 15
+      IdTokenValidity: 15
+      RefreshTokenValidity: 1
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+  SmokeClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: SmokeScopes
+    Properties:
+      UserPoolId: !Ref UserPoolId
+      ClientName: health-chat-smoke
+      GenerateSecret: true
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - client_credentials
+      AllowedOAuthScopes:
+        - health-smoke/query
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 5
+      TokenValidityUnits:
+        AccessToken: minutes
+Outputs:
+  HealthClientId:
+    Value: !Ref BrowserClient
+  SmokeClientId:
+    Value: !Ref SmokeClient

@@ -1,0 +1,26 @@
+# Health data must never be committed. Keep raw exports and generated tables local.
+data/
+raw/
+exports/
+*.xml
+*.gpx
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.csv
+*.parquet
+*.zip
+*.tz
+*.tar.gz
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# Build and dependencies
+node_modules/
+dist/
+.cloud-package/
+.DS_Store

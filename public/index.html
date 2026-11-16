@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>health-chat</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <h1>health-chat</h1>
+    <p class="muted">A private assistant for your own health data. Not medical advice.</p>
+    <div class="row">
+      <button id="sign-in" type="button" hidden>Sign in</button>
+      <button id="sign-out" type="button" hidden>Sign out</button>
+      <span id="status" class="muted">Checking sign-in…</span>
+    </div>
+  </header>
+
+  <main id="app" hidden>
+    <section>
+      <h2>Status</h2>
+      <p id="data-status" class="muted">No health data is loaded yet. Ingest has not been built.</p>
+      <p>Model setting: <code>BedrockModel</code> in <code>infra/template.yaml</code>.</p>
+      <div class="row">
+        <button id="run-smoke" type="button">Run model check</button>
+        <span id="smoke-result" class="muted"></span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Guides</h2>
+      <details>
+        <summary>What you can ask</summary>
+        <ul>
+          <li>Trends: weight, steps, sleep, calories, and blood markers over time (for example HbA1c, LDL, sodium).</li>
+          <li>Relationships: calories against weight, or steps against resting heart rate. These are correlations with sample sizes, not causes.</li>
+          <li>Out-of-range labs: which values fell outside the reference range, with dates.</li>
+          <li>Timelines: what was recorded around a date.</li>
+          <li>Gaps: tests not repeated, and days with no data.</li>
+        </ul>
+        <p class="muted">Not available yet: these answers need ingested data and the query tool, which are still to be built.</p>
+      </details>
+
+      <details>
+        <summary>How an answer is made</summary>
+        <ul>
+          <li>Numbers come from SQL over your tables, not from the model's memory.</li>
+          <li>Every answer shows the SQL or the document page it came from.</li>
+          <li>You can rerun the SQL yourself and compare the result.</li>
+        </ul>
+      </details>
+
+      <details>
+        <summary>How to read a trend</summary>
+        <ul>
+          <li>Check the number of data points. One value is a snapshot, not a trend.</li>
+          <li>Check for gaps. A missing day is unknown, not zero.</li>
+          <li>Lab values are one-day snapshots. Compare with the reference range and the lab's own units.</li>
+        </ul>
+      </details>
+
+      <details>
+        <summary>How to read a correlation</summary>
+        <ul>
+          <li>A correlation shows two things moving together. It does not show that one causes the other.</li>
+          <li>Small samples and shared causes (for example, heat on both training and cramps) can mislead.</li>
+          <li>Each correlation shows its sample size.</li>
+        </ul>
+      </details>
+
+      <details>
+        <summary>Sodium: what the data can and cannot show</summary>
+        <ul>
+          <li>Blood sodium and potassium come from lab tests on specific days.</li>
+          <li>Salt intake is not recorded in the diet log, so salt intake cannot be measured here.</li>
+          <li>Any sodium answer will say: "blood sodium only".</li>
+        </ul>
+      </details>
+
+      <details>
+        <summary>Blank days are unknown, not zero</summary>
+        <ul>
+          <li>A day with no entry is not treated as "no symptoms" or "zero calories".</li>
+          <li>Answers state how many days were logged out of the period.</li>
+        </ul>
+      </details>
+
+      <details>
+        <summary>Adding data</summary>
+        <ul>
+          <li>Daily diet: comes from the stuntman-diet nightly export (not built yet).</li>
+          <li>Apple Watch: export from the iPhone and upload to the apple-health bucket (not built yet).</li>
+          <li>Medical files: Clalit exports and hospital PDFs are uploaded to the medical bucket (not built yet).</li>
+        </ul>
+      </details>
+
+      <details>
+        <summary>What is not used</summary>
+        <ul>
+          <li>Only folders on the ingest allowlist are read. Anything else is ignored.</li>
+          <li>No other people's data is used.</li>
+        </ul>
+      </details>
+
+      <details>
+        <summary>Medical disclaimer</summary>
+        <ul>
+          <li>This app is not medical advice and does not diagnose or treat.</li>
+          <li>Seek urgent care for severe or sudden headache, confusion, vomiting, fainting, or chest pain.</li>
+          <li>Discuss supplement doses, potassium, and kidney-related results with a doctor.</li>
+        </ul>
+      </details>
+    </section>
+  </main>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
