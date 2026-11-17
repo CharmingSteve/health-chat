@@ -3,8 +3,7 @@ import { serve } from "@hono/node-server";
 import { verifyCognitoToken } from "./auth.js";
 import { createConverse } from "./bedrock.js";
 import { createApp } from "./app.js";
-import { answerQuestion } from "./chat.js";
-import { athenaRunner } from "./query.js";
+import { makeAsk } from "./ask.js";
 import { createChatModel } from "./bedrock.js";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
@@ -33,11 +32,7 @@ const cognitoDomain = required("COGNITO_DOMAIN");
 const dataEnabled = process.env.DATA_ENABLED === "true";
 const modelId = required("BEDROCK_MODEL");
 const ask = dataEnabled
-  ? (question: string, context: string) =>
-      answerQuestion(question, {
-        callModel: createChatModel(modelId),
-        runQuery: athenaRunner({ workgroup: required("ATHENA_WORKGROUP"), database: required("GLUE_DATABASE") }),
-      }, context)
+  ? makeAsk({ modelId, workgroup: required("ATHENA_WORKGROUP"), database: required("GLUE_DATABASE") })
   : undefined;
 
 // Diet import status and refresh (production only). The job itself runs in its own Lambda.
