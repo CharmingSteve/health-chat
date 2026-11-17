@@ -67,6 +67,12 @@ aws("s3", "cp", "dist/health-chat.zip", `s3://${artifacts.ArtifactBucketName}/${
 deploy("infra/auth.yaml", auth, [`UserPoolId=${shared.CognitoUserPool}`, `CallbackUrl=${callback}`]);
 const authentication = outputs(auth);
 
+// Weekly diet import and its refresh target. Production only: staging never reads the real diet data.
+const DIET_JOB = "health-chat-diet-job";
+if (environment === "production") {
+  deploy("infra/diet-job.yaml", DIET_JOB, [`CodeBucket=${artifacts.ArtifactBucketName}`, `CodeKey=${key}`], true);
+}
+
 deploy(
   "infra/template.yaml",
   stack,
@@ -83,6 +89,7 @@ deploy(
     `DataEnabled=${environment === "production" ? "true" : "false"}`,
     `TablesBucket=${TABLES_BUCKET}`,
     `LogsBucket=${LOGS_BUCKET}`,
+    `DietJobName=${DIET_JOB}`,
   ],
   true,
 );

@@ -315,6 +315,74 @@ async function askQuestion(event) {
   }
 }
 
+// ---- Diet import status ----------------------------------------------------------------------
+function describeDiet(status) {
+  const ok = status.last_success;
+  const attempt = status.last_attempt;
+  const lines = [];
+  if (ok) {
+    const when = new Date(ok.run_at).toLocaleString();
+    lines.push(`Last successful import: ${when} (${ok.active_days} days, ${ok.first_day} to ${ok.last_day}). Stuntman snapshot taken ${new Date(ok.stuntman_snapshot_export_time).toLocaleString()}.`);
+  } else {
+    lines.push("No diet import has finished yet.");
+  }
+  if (attempt && attempt.status === "failed") {
+    lines.push(`The last attempt failed at ${new Date(attempt.last_attempt_at).toLocaleString()} (${attempt.trigger}). The data above is from the last successful import.`);
+  }
+  return lines.join(" ");
+}
+
+async function loadDietStatus() {
+  const el = $("#diet-status");
+  try {
+    const response = await api("/api/diet/status");
+    if (!response.ok) {
+      el.textContent = "Diet import status is not available here.";
+      return null;
+    }
+    const status = await response.json();
+    el.textContent = describeDiet(status);
+    return status;
+  } catch (error) {
+    el.textContent = error.message;
+    return null;
+  }
+}
+
+async function refreshDiet() {
+  const button = $("#refresh-diet");
+  const note = $("#refresh-status");
+  const before = await loadDietStatus();
+  const beforeTime = before?.last_success?.run_at ?? null;
+  button.disabled = true;
+  note.textContent = "Started. This takes a few minutes.";
+  try {
+    const response = await api("/api/diet/refresh", { method: "POST" });
+    if (!response.ok) {
+      note.textContent = "The refresh could not be started.";
+      return;
+    }
+    // Poll the status for up to about 10 minutes, then stop and leave the status line to show the result.
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20000));
+      const status = await loadDietStatus();
+      if (status?.last_success?.run_at !== beforeTime && status?.last_success) {
+        note.textContent = "Done.";
+        return;
+      }
+      if (status?.last_attempt?.status === "failed" && status.last_attempt.last_attempt_at > (before?.last_attempt?.last_attempt_at ?? "")) {
+        note.textContent = "The refresh failed. See the status above.";
+        return;
+      }
+    }
+    note.textContent = "Still running. Check the status above later.";
+  } catch (error) {
+    note.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function start() {
   config = await (await fetch("/config.json")).json();
   $("#sign-in").addEventListener("click", () => signIn().catch((error) => ($("#status").textContent = error.message)));
@@ -322,6 +390,7 @@ async function start() {
   $("#run-smoke").addEventListener("click", runModelCheck);
   $("#ask-form").addEventListener("submit", askQuestion);
   $("#new-chat").addEventListener("click", startNewChat);
+  $("#refresh-diet").addEventListener("click", refreshDiet);
   for (const turn of loadPending()) resendTurn(turn, 20);
   try {
     await finishSignIn();
@@ -339,7 +408,10 @@ async function start() {
   show($("#sign-in"), !stillSignedIn);
   show($("#sign-out"), stillSignedIn);
   show($("#app"), stillSignedIn);
-  if (stillSignedIn) loadChatList();
+  if (stillSignedIn) {
+    loadChatList();
+    loadDietStatus();
+  }
   $("#status").textContent = stillSignedIn ? "Signed in." : "Not signed in.";
 }
 

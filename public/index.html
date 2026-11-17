@@ -49,6 +49,12 @@
       <h2>Status</h2>
       <p id="data-status" class="muted">Health data is loaded from the tables. Use the question box above; each answer lists the queries it ran.</p>
       <p>Model setting: <code>BedrockModel</code> in <code>infra/template.yaml</code>.</p>
+      <h3>Diet import</h3>
+      <p id="diet-status" class="muted">Checking…</p>
+      <div class="row">
+        <button id="refresh-diet" type="button">Refresh diet now</button>
+        <span id="refresh-status" class="muted"></span>
+      </div>
       <div class="row">
         <button id="run-smoke" type="button">Run model check</button>
         <span id="smoke-result" class="muted"></span>

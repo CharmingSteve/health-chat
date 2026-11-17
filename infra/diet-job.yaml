@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  health-chat weekly diet import (Sunday 06:00 Asia/Jerusalem) and the on-demand refresh target. Production only.
+  The job copies the newest stuntman-diet snapshot into the diet bucket and rebuilds the diet tables.
+Parameters:
+  CodeBucket:
+    Type: String
+  CodeKey:
+    Type: String
+    Description: releases/<commit SHA>.zip (the same release as the Web Function).
+  StuntmanBucket:
+    Type: String
+    Default: stuntman-diet-production-puddlebucket-xaioorfosdus
+  DietBucket:
+    Type: String
+    Default: health-chat-diet-570989156105-us-east-1-an
+  TablesBucket:
+    Type: String
+    Default: health-chat-tables-570989156105-us-east-1-an
+Resources:
+  DietJobLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}
+      RetentionInDays: 30
+  DietJobDeadLetters:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+  DietJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: diet-import
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub ${DietJobLogGroup.Arn}:log-stream:*
+              - Effect: Allow
+                Action: [s3:ListBucket]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${StuntmanBucket}
+                  - !Sub arn:${AWS::Partition}:s3:::${DietBucket}
+                  - !Sub arn:${AWS::Partition}:s3:::${TablesBucket}
+              - Effect: Allow
+                Action: [s3:GetObject]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${StuntmanBucket}/exports/*
+                  - !Sub arn:${AWS::Partition}:s3:::${DietBucket}/legacy-master/*
+                  - !Sub arn:${AWS::Partition}:s3:::${DietBucket}/stuntman-production/*
+              # Copies of the snapshot and the tables are written only under these prefixes. Nothing is deleted.
+              - Effect: Allow
+                Action: [s3:PutObject]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${DietBucket}/stuntman-production/*
+                  - !Sub arn:${AWS::Partition}:s3:::${TablesBucket}/warehouse/diet_*/*
+                  - !Sub arn:${AWS::Partition}:s3:::${TablesBucket}/ledger/diet*
+  DietJob:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}
+      Runtime: nodejs24.x
+      Handler: dist/diet-job.handler
+      Role: !GetAtt DietJobRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      MemorySize: 1024
+      Timeout: 300
+      # One run at a time: a refresh while a run is going waits instead of writing over it.
+      ReservedConcurrentExecutions: 1
+      Environment:
+        Variables:
+          STUNTMAN_BUCKET: !Ref StuntmanBucket
+          DIET_BUCKET: !Ref DietBucket
+          TABLES_BUCKET: !Ref TablesBucket
+      DeadLetterConfig:
+        TargetArn: !GetAtt DietJobDeadLetters.Arn
+    DependsOn: DietJobLogGroup
+  DietJobAsyncConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref DietJob
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 2
+      MaximumEventAgeInSeconds: 3600
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-diet-job
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt DietJob.Arn
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt DietJobDeadLetters.Arn
+  WeeklyDietImport:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub ${AWS::StackName}-weekly
+      Description: Every Sunday at 06:00, Asia/Jerusalem
+      ScheduleExpression: cron(0 6 ? * SUN *)
+      ScheduleExpressionTimezone: Asia/Jerusalem
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      State: ENABLED
+      Target:
+        Arn: !GetAtt DietJob.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: '{"trigger":"schedule"}'
+        RetryPolicy:
+          MaximumRetryAttempts: 2
+          MaximumEventAgeInSeconds: 3600
+        DeadLetterConfig:
+          Arn: !GetAtt DietJobDeadLetters.Arn
+Outputs:
+  DietJobName:
+    Value: !Ref DietJob
+  DietJobArn:
+    Value: !GetAtt DietJob.Arn

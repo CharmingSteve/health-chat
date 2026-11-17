@@ -56,14 +56,12 @@ Run these from the repo root, with `export AWS_PROFILE=click AWS_REGION=us-east-
 
 ### Diet (daily entries from stuntman-diet)
 
-stuntman-diet exports a snapshot every night at 03:00 Asia/Jerusalem to its puddle bucket. That bucket keeps the exports for 90 days and the results for 7 days, so copy them to the diet bucket first:
+Diet imports itself every Sunday at 06:00 (Asia/Jerusalem). A weekly Lambda copies the newest stuntman-diet snapshot into the diet bucket, keeps it there (stuntman's own copies expire), and rebuilds the diet tables. Nothing needs to be done by hand.
 
-```bash
-aws s3 sync s3://stuntman-diet-production-puddlebucket-xaioorfosdus/exports/ s3://health-chat-diet-570989156105-us-east-1-an/stuntman-production/exports/ --sse AES256
-aws s3 sync s3://stuntman-diet-production-puddlebucket-xaioorfosdus/results/ s3://health-chat-diet-570989156105-us-east-1-an/stuntman-production/results/ --sse AES256
-```
-
-Then run `npm run ingest:diet`. It uses the newest snapshot by its manifest time. Named exclusions are in `src/ingest/diet.ts` (`DIET_EXCLUSIONS`); each one is counted in `ledger/diet.json`.
+- **Refresh now:** the "Refresh diet now" button on the page runs the same import at once. The status line shows the last successful import (time, days covered, the snapshot used) and any failed attempt. A failed attempt does not change the last good data.
+- **Schedule and job:** `infra/diet-job.yaml` (production only). The job has one run at a time, and failed runs go to a dead-letter queue.
+- **Manual run:** `npm run ingest:diet` runs the same import from your machine (uses the `click` profile).
+- Named exclusions are in `src/ingest/diet.ts` (`DIET_EXCLUSIONS`). Each exclusion is counted in `ledger/diet.json`.
 
 The legacy master CSV is read from `legacy-master/` in the diet bucket. It is not updated from now on; new days come from stuntman-diet.
 
