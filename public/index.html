@@ -21,20 +21,19 @@
     <section>
       <h2>Progress photos</h2>
       <p class="muted">Photos are private. The original keeps its location and device details. Comparisons are visual estimates, not measurements.</p>
-      <form id="photo-form">
-        <label for="photo-date">Date the photo was taken</label>
-        <input id="photo-date" type="date" required>
-        <label for="photo-file">Photo (jpg or png, up to 10 MB)</label>
-        <input id="photo-file" type="file" accept="image/jpeg,image/png" required>
-        <label for="photo-setting">Setting (optional, e.g. gym, home, morning)</label>
-        <input id="photo-setting" type="text" maxlength="120">
-        <label for="photo-note">Note (optional)</label>
-        <input id="photo-note" type="text" maxlength="500">
-        <div class="row">
-          <button id="photo-upload" type="submit">Upload photo</button>
-          <span id="photo-status" class="muted"></span>
-        </div>
-      </form>
+      <div id="photo-drop" class="drop" tabindex="0" role="button" aria-label="Choose or drop photos">
+        Drag photos here from Photos or Finder, or click to choose. JPG, PNG, or HEIC.
+        <input id="photo-file" type="file" multiple accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif,.jpg,.jpeg,.png" hidden>
+      </div>
+      <label for="photo-setting">Setting (optional, applies to all)</label>
+      <input id="photo-setting" type="text" maxlength="120">
+      <label for="photo-note">Note (optional, applies to all)</label>
+      <input id="photo-note" type="text" maxlength="500">
+      <div id="photo-pending"></div>
+      <div class="row">
+        <button id="photo-upload" type="button" hidden>Upload all</button>
+        <span id="photo-status" class="muted"></span>
+      </div>
       <ul id="photo-list" class="chat-list"><li class="muted">Loading…</li></ul>
       <div class="row">
         <button id="photo-compare" type="button">Compare selected photos</button>

@@ -384,73 +384,226 @@ async function refreshDiet() {
 }
 
 // ---- Progress photos ----------------------------------------------------------------------------
-// The browser makes a smaller analysis copy by drawing the photo onto a canvas. Drawing re-encodes the image,
-// which drops the metadata, so the model never receives the location. The original is uploaded separately.
-async function makeAnalysisCopy(file) {
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 1024 / Math.max(bitmap.width, bitmap.height));
+// Files are read in the browser: the camera's date (EXIF), an analysis copy (re-encoded JPEG, no location), and HEIC
+// decoding (libheif, loaded only when a HEIC is used). The original file is uploaded unchanged.
+const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+const MAX_PENDING = 20;
+let pending = [];
+let exifModule = null;
+let heifModule = null;
+
+function inferType(name, mime) {
+  if (["image/jpeg", "image/png", "image/heic", "image/heif"].includes(mime)) return mime;
+  const ext = (name.toLowerCase().split(".").pop() || "");
+  return { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", heic: "image/heic", heif: "image/heif" }[ext] || null;
+}
+
+function isHeicType(type) {
+  return type === "image/heic" || type === "image/heif";
+}
+
+// Same rules as src/photo-dates.ts (the server checks the stored date again).
+function parseRawExifDate(raw) {
+  const m = /^(\d{4}):(\d{2}):(\d{2}) \d{2}:\d{2}:\d{2}$/.exec(String(raw || "").trim());
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+}
+
+function chooseDate(exifRaw, fileDate, today) {
+  const fromExif = parseRawExifDate(exifRaw);
+  let date = today;
+  let source = "today";
+  if (fromExif) {
+    date = fromExif;
+    source = "metadata";
+  } else if (fileDate && !Number.isNaN(fileDate.getTime())) {
+    date = fileDate.toLocaleDateString("en-CA");
+    source = "file";
+  }
+  const warning = date > today ? "This date is in the future. Please check it." : Number(date.slice(0, 4)) < 2000 ? "This date is before 2000. Please check it." : "";
+  return { date, source, warning };
+}
+
+async function readCaptureDate(file) {
+  try {
+    if (!exifModule) exifModule = await import("/vendor/exifr.mjs");
+    const raw = await exifModule.parse(file, { pick: ["DateTimeOriginal"], reviveValues: false });
+    return raw ? raw.DateTimeOriginal : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function decodeHeic(file) {
+  if (!heifModule) heifModule = await import("/vendor/libheif.mjs");
+  const libheif = await heifModule.default();
+  const decoder = new libheif.HeifDecoder();
+  const images = decoder.decode(new Uint8Array(await file.arrayBuffer()));
+  const image = images[0];
+  if (!image) throw new Error("no image in file");
+  const width = image.get_width();
+  const height = image.get_height();
+  const data = new Uint8ClampedArray(width * height * 4);
+  await new Promise((resolve, reject) => image.display({ data, width, height }, (out) => (out ? resolve() : reject(new Error("display failed")))));
   const canvas = document.createElement("canvas");
-  canvas.width = Math.round(bitmap.width * scale);
-  canvas.height = Math.round(bitmap.height * scale);
-  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext("2d").putImageData(new ImageData(data, width, height), 0, 0);
+  if (image.free) image.free();
+  return canvas;
+}
+
+// Makes the analysis copy first. If it fails, nothing is uploaded, so no half-saved photo is left behind.
+async function makeAnalysisCopy(file, type) {
+  let source;
+  try {
+    source = isHeicType(type) ? await decodeHeic(file) : await createImageBitmap(file);
+  } catch {
+    throw new Error("This HEIC could not be read in this browser. Export a JPEG from Photos and drop that instead.");
+  }
+  const width = source.width;
+  const height = source.height;
+  const scale = Math.min(1, 1024 / Math.max(width, height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(width * scale);
+  canvas.height = Math.round(height * scale);
+  canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
   return new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not make the analysis copy"))), "image/jpeg", 0.85));
 }
 
-async function postForm(form, file, contentType) {
+async function addFiles(files) {
+  const today = new Date().toLocaleDateString("en-CA");
+  for (const file of Array.from(files).slice(0, MAX_PENDING - pending.length)) {
+    const type = inferType(file.name, file.type);
+    if (!type) {
+      $("#photo-status").textContent = `${file.name}: only JPG, PNG, and HEIC are accepted.`;
+      continue;
+    }
+    if (file.size > MAX_PHOTO_BYTES) {
+      $("#photo-status").textContent = `${file.name}: larger than 10 MB.`;
+      continue;
+    }
+    const exifRaw = await readCaptureDate(file);
+    const chosen = chooseDate(exifRaw, new Date(file.lastModified), today);
+    pending.push({ file, type, date: chosen.date, source: chosen.source, warning: chosen.warning, status: "" });
+  }
+  renderPending();
+}
+
+function renderPending() {
+  const box = $("#photo-pending");
+  box.replaceChildren(...pending.map((item, index) => {
+    const row = document.createElement("div");
+    row.className = "pending-row";
+    const name = document.createElement("span");
+    name.textContent = item.file.name;
+    const date = document.createElement("input");
+    date.type = "date";
+    date.value = item.date;
+    date.addEventListener("change", () => {
+      item.date = date.value;
+      item.source = "manual";
+      item.warning = "";
+      renderPending();
+    });
+    const label = document.createElement("span");
+    label.className = "muted";
+    label.textContent = { metadata: "date from photo", file: "date from file", today: "date not found, today used", manual: "date typed" }[item.source];
+    row.append(name, date, label);
+    if (item.warning) {
+      const w = document.createElement("span");
+      w.className = "warn";
+      w.textContent = item.warning;
+      row.append(w);
+    }
+    if (item.status) {
+      const st = document.createElement("span");
+      st.className = "muted";
+      st.textContent = item.status;
+      row.append(st);
+    }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => {
+      pending.splice(index, 1);
+      renderPending();
+    });
+    row.append(remove);
+    return row;
+  }));
+  $("#photo-upload").hidden = pending.length === 0;
+}
+
+async function postForm(form, body) {
   const data = new FormData();
   for (const [k, v] of Object.entries(form.fields)) data.append(k, v);
-  data.append("file", file);
+  data.append("file", body);
   const response = await fetch(form.url, { method: "POST", body: data });
   if (!response.ok) throw new Error(`Upload was refused (${response.status}).`);
 }
 
-async function uploadPhoto(event) {
-  event.preventDefault();
+async function uploadOne(item) {
+  const copy = await makeAnalysisCopy(item.file, item.type);
+  const named = new File([item.file], item.file.name, { type: item.type });
+  const forms = await (await api("/api/photos/upload-form", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ date_taken: item.date, original_type: item.type }),
+  })).json();
+  if (forms.error) throw new Error(forms.error);
+  await postForm(forms.original, named);
+  await postForm(forms.analysis, copy);
+  const saved = await api("/api/photos", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: forms.id,
+      date_taken: forms.date_taken,
+      date_source: item.source,
+      original_key: forms.original.key,
+      analysis_key: forms.analysis.key,
+      original_type: item.type,
+      setting: $("#photo-setting").value || null,
+      note: $("#photo-note").value || null,
+    }),
+  });
+  if (!saved.ok) throw new Error((await saved.json()).error || "The photo could not be recorded.");
+}
+
+async function uploadAll() {
+  const button = $("#photo-upload");
   const status = $("#photo-status");
-  const file = $("#photo-file").files[0];
-  const date = $("#photo-date").value;
-  if (!file) return;
-  if (file.size > 10 * 1024 * 1024) {
-    status.textContent = "That file is larger than 10 MB.";
-    return;
+  button.disabled = true;
+  let saved = 0;
+  for (const item of [...pending]) {
+    item.status = "Uploading…";
+    renderPending();
+    try {
+      await uploadOne(item);
+      item.status = "Saved";
+      saved += 1;
+    } catch (error) {
+      item.status = error.message;
+    }
+    renderPending();
   }
-  $("#photo-upload").disabled = true;
-  try {
-    status.textContent = "Preparing…";
-    const forms = await (await api("/api/photos/upload-form", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ date_taken: date || undefined, original_type: file.type }),
-    })).json();
-    if (forms.error) throw new Error(forms.error);
-    status.textContent = "Uploading…";
-    await postForm(forms.original, file, file.type);
-    const analysis = await makeAnalysisCopy(file);
-    await postForm(forms.analysis, analysis, "image/jpeg");
-    const saved = await api("/api/photos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: forms.id,
-        date_taken: forms.date_taken,
-        original_key: forms.original.key,
-        analysis_key: forms.analysis.key,
-        original_type: file.type,
-        setting: $("#photo-setting").value || null,
-        note: $("#photo-note").value || null,
-      }),
-    });
-    if (!saved.ok) throw new Error((await saved.json()).error || "The photo could not be recorded.");
-    status.textContent = "Saved.";
-    $("#photo-form").reset();
-    $("#photo-date").value = new Date().toLocaleDateString("en-CA");
-    loadPhotos();
-  } catch (error) {
-    status.textContent = error.message;
-  } finally {
-    $("#photo-upload").disabled = false;
-  }
+  pending = pending.filter((item) => item.status !== "Saved");
+  status.textContent = `${saved} saved.`;
+  renderPending();
+  button.disabled = false;
+  if (saved > 0) loadPhotos();
+}
+
+function setupPhotoDrop() {
+  const zone = $("#photo-drop");
+  const input = $("#photo-file");
+  zone.addEventListener("click", () => input.click());
+  zone.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") input.click(); });
+  input.addEventListener("change", () => { addFiles(input.files); input.value = ""; });
+  for (const type of ["dragenter", "dragover"]) zone.addEventListener(type, (e) => { e.preventDefault(); zone.classList.add("over"); });
+  for (const type of ["dragleave", "drop"]) zone.addEventListener(type, () => zone.classList.remove("over"));
+  zone.addEventListener("drop", (e) => { e.preventDefault(); addFiles(e.dataTransfer.files); });
+  $("#photo-upload").addEventListener("click", uploadAll);
 }
 
 async function loadPhotos() {
@@ -514,9 +667,9 @@ async function start() {
   $("#ask-form").addEventListener("submit", askQuestion);
   $("#new-chat").addEventListener("click", startNewChat);
   $("#refresh-diet").addEventListener("click", refreshDiet);
-  $("#photo-form").addEventListener("submit", uploadPhoto);
+  setupPhotoDrop();
   $("#photo-compare").addEventListener("click", comparePhotos);
-  $("#photo-date").value = new Date().toLocaleDateString("en-CA");
+
   for (const turn of loadPending()) resendTurn(turn, 20);
   try {
     await finishSignIn();
