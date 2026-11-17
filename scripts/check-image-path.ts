@@ -1,6 +1,10 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 import { createChatModel } from "../src/bedrock.js";
 import { answerQuestion } from "../src/chat.js";
+import { comparePhotos } from "../src/compare.js";
+import { templateDefault } from "./lib.mjs";
 
 // Checks that the model really receives images in the chat: a generated test image (red left half, blue right half)
 // whose answer can be checked. No personal photo is used.
@@ -17,25 +21,45 @@ const chunk = (type: string, data: Buffer) => {
   return Buffer.concat([len, td, crc]);
 };
 const W = 200, H = 200;
-const raw = Buffer.alloc((W * 3 + 1) * H);
-for (let y = 0; y < H; y += 1) {
-  raw[y * (W * 3 + 1)] = 0;
-  for (let x = 0; x < W; x += 1) {
-    const o = y * (W * 3 + 1) + 1 + x * 3;
-    if (x < W / 2) { raw[o] = 255; raw[o + 1] = 0; raw[o + 2] = 0; } else { raw[o] = 0; raw[o + 1] = 0; raw[o + 2] = 255; }
+function image(reversed = false): Uint8Array {
+  const raw = Buffer.alloc((W * 3 + 1) * H);
+  for (let y = 0; y < H; y += 1) {
+    raw[y * (W * 3 + 1)] = 0;
+    for (let x = 0; x < W; x += 1) {
+      const o = y * (W * 3 + 1) + 1 + x * 3;
+      if ((x < W / 2) !== reversed) { raw[o] = 255; raw[o + 1] = 0; raw[o + 2] = 0; } else { raw[o] = 0; raw[o + 1] = 0; raw[o + 2] = 255; }
+    }
   }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+  return new Uint8Array(png);
 }
-const ihdr = Buffer.alloc(13);
-ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4); ihdr[8] = 8; ihdr[9] = 2;
-const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+const modelId = process.env.BEDROCK_MODEL ?? templateDefault(readFileSync(new URL("../infra/template.yaml", import.meta.url), "utf8"), "BedrockModel");
 
 const answer = await answerQuestion(
   "Describe this image in one short sentence: name the colour of each half.",
   {
-    callModel: createChatModel(process.env.BEDROCK_MODEL ?? "us.amazon.nova-2-lite-v1:0"),
+    callModel: createChatModel(modelId),
     runQuery: async (sql) => ({ ok: false, columns: [], rows: [], row_count: 0, truncated: false, bytes_scanned: 0, sql_run: sql, error: "Queries are disabled for the synthetic image check" }),
   },
   "Verified diet figures are unavailable for this synthetic image check.",
-  [{ format: "png", bytes: new Uint8Array(png) }],
+  [{ format: "png", bytes: image() }],
 );
 console.log(JSON.stringify({ rounds: answer.rounds, queries: answer.queries.map((q) => q.sql.slice(0, 80)), answer: answer.answer.slice(0, 300) }));
+assert.match(answer.answer, /\bred\b/i);
+assert.match(answer.answer, /\bblue\b/i);
+
+const comparison = await comparePhotos(
+  [
+    { date_taken: "2026-02-01", type: "png", bytes: image(true) },
+    { date_taken: "2026-01-01", type: "png", bytes: image() },
+  ],
+  'These are synthetic colour panels, not body photos. For each date, report the left and right colours using exactly this format: "YYYY-MM-DD: left red, right blue" (substitute the colours you see). Then state what changed.',
+  "",
+  modelId,
+);
+console.log(JSON.stringify({ comparison }));
+const plainComparison = comparison.replaceAll("**", "");
+assert.match(plainComparison, /2026-01-01:\s*left red,\s*right blue/i);
+assert.match(plainComparison, /2026-02-01:\s*left blue,\s*right red/i);

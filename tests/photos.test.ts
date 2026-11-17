@@ -59,12 +59,15 @@ describe("photo records", () => {
 
 describe("comparison", () => {
   const photo = (date: string) => ({ date_taken: date, bytes: new Uint8Array([1, 2, 3]), type: "jpeg" as const });
-  it("puts the photos in date order, labels them, and keeps the rules in the instructions", () => {
+  it("puts every image before the text, maps their dates, and keeps the rules", () => {
     const msg = compareMessage([photo("2026-11-10"), photo("2026-09-01")], "compare", "");
-    const texts = (msg.content as { text?: string }[]).map((c) => c.text ?? "").join("\n");
-    expect(texts.indexOf("Photo taken 2026-11-10")).toBeGreaterThan(-1);
+    expect(msg.content).toHaveLength(3);
+    expect(msg.content?.slice(0, 2).every((block) => block.image !== undefined)).toBe(true);
+    const texts = msg.content?.[2]?.text ?? "";
+    expect(texts).toContain("Photo 1 taken 2026-11-10\nPhoto 2 taken 2026-09-01");
     expect(texts).toContain("label every estimate 'visual estimate'");
     expect(texts).toContain("Please seek urgent medical care now.");
+    expect(texts).toContain("Do not invent");
     expect(COMPARE_INSTRUCTIONS).toContain("Never present an estimate as a measurement");
   });
   it("refuses fewer than two or more than eight photos before calling the model", async () => {
