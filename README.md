@@ -2,9 +2,38 @@
 
 A private assistant for your own health data. It runs as an AWS Lambda Web Function (Node.js 24), behind Cognito sign-in.
 
-**Working now:** sign-in, the question box (answers from SQL over your tables, with the queries shown), the model check, the guide page, the deploy pipeline, and smoke tests. Production only reads your data; staging never does.
-**Imported:** diet, Apple Health (records, workouts, routes, ECG), lab results, and medical document text.
-**Not built yet:** charts; OCR or vision reading of scanned PDFs and images; de-duplication of Apple Health sources. See [docs/PLAN.md](docs/PLAN.md).
+## Built in less than a day
+
+This entire app was vibe coded in less than one day by **Steve Bar Yakov Gind**, a DevOps engineer with no real experience with TypeScript, using AI coding assistants.
+
+That is the project's origin story, not a guarantee of correctness or medical reliability. Model answers and visual comparisons can be wrong; check the underlying records and consult a clinician for medical decisions.
+
+## Features
+
+- **Cognito login:** hosted sign-in with authorization code flow and PKCE. The backend verifies Cognito JWT signatures, issuer, expiry, token type, and app client before allowing API access.
+- **Natural-language health and diet chat:** ask about trends, relationships, out-of-range lab values, timelines, and gaps across imported records. Amazon Bedrock generates answers using checked, read-only Athena SQL, with the queries shown for inspection.
+- **Grounded diet figures:** database-computed totals, averages, and counts; intake versus effective burn; explicit labels for assumed burn; complete, partial, missing, and unknown days distinguished rather than treating missing data as zero.
+- **Medical document lookup:** searchable extracted PDF text and normalized lab results with dates, units, reference ranges, and flags. Medication questions are instructed to use the stored documents rather than guess brand ingredients.
+- **Persistent conversations:** new chats, reopening previous chats, bounded follow-up context, a recent-chat list, and permanent S3 history containing questions, answers, queries, and result rows. Failed saves are retried on the server and in the browser.
+- **Photo uploads:** drag and drop or file selection for JPEG, PNG, and HEIC; browser-side HEIC decoding and analysis-copy generation; capture dates from EXIF with visible fallbacks and manual correction; optional settings and notes; retained original location metadata.
+- **On-demand photo browsing:** a collapsed photo library with dated captions and locations where available, and thumbnails fetched only as they approach the viewport.
+- **Photo comparisons:** select two to eight uploaded photos, compare them in date order, and save the comparison in the current chat or a new chat. Answers are instructed to describe each image, label visual estimates, and explain limits such as pose and lighting.
+- **Photo-aware chat:** attach up to four images to a question, ask the chat to list or view uploaded photos, and continue discussing a comparison using the same analysis images, including after reopening the chat. Older comparisons recover photo links only when their dated headings uniquely identify the images.
+- **Data imports:** diet exports and legacy diet CSV; Apple Health records, workouts, GPX routes, and ECG recordings; lab CSV exports, medical PDF text, and an image/DICOM file index. Source files are not changed, and import ledgers record what was read or skipped.
+- **Diet refresh:** scheduled weekly import plus a **Refresh diet now** button, with the latest successful import and failed-attempt status.
+- **Owner-provided context:** optional stated diet/burn patterns, labelled as statements rather than measurements and excluded from computed totals.
+- **In-app guidance and checks:** explanatory guides, a model-response check, a health endpoint, authenticated smoke tests, unit tests, mutation checks, and TypeScript builds.
+- **Controlled releases:** CloudFormation infrastructure, CI-built release packages, staging deployment and Cognito smoke tests, then approval-gated production deployment from `main`. Staging cannot read production health data.
+
+**Not built yet:** charts, OCR of scanned medical PDFs or medical-image interpretation in the import pipeline, and cross-source de-duplication of overlapping Apple Health data. Photo chat and progress-photo vision are implemented separately from medical-file ingestion. See [docs/PLAN.md](docs/PLAN.md) for the broader plan.
+
+## Privacy and login at a glance
+
+The app's persistent health records and personally identifiable information (PII), including uploaded photos and saved chats, are kept in **closed, private S3 buckets**, not public buckets or this repository. Buckets block public access, use encryption at rest, and keep versions. Access uses AWS IAM permissions; photo uploads use constrained presigned forms rather than public object access.
+
+**Amazon Cognito handles login** and stores the authentication identities. Private S3 storage does not mean data never leaves S3: the backend queries records through Athena and sends relevant context and analysis images to Amazon Bedrock to answer questions. Original photo files are not sent for photo analysis; smaller re-encoded copies without embedded location metadata are used instead.
+
+The signed-in browser displays private data and stores its access token in session storage. If a chat save fails, the pending turn can remain in browser local storage until it is saved. Photo dates and settings, and locations returned by the photo-list tool, can also form part of model context. See [Privacy](#privacy) and [Where data lives](#where-data-lives).
 
 ## Asking questions
 
@@ -12,7 +41,7 @@ A private assistant for your own health data. It runs as an AWS Lambda Web Funct
 2. The model writes SQL. The app checks it before running it: one SELECT statement, approved tables only, no comments, at most 500 rows.
 3. The answer is shown with the queries it ran. You can rerun any of them in Athena to check the numbers.
 
-What the chat does not do: it does not change data, it does not read the raw files, and it does not give medical advice. Blank days are unknown, not zero. Sodium answers mean blood sodium only.
+What the chat does not do: it does not modify source health records or run write queries. It queries imported tables and can view photo analysis copies, not raw medical files or original photo files. It is not medical advice. Blank days are unknown, not zero. Sodium answers mean blood sodium only.
 
 Model and query settings: `BedrockModel` in `infra/template.yaml` (model), `DataEnabled` (production only), and the workgroup limit of 1 GiB scanned per query in `infra/data.yaml`.
 
@@ -38,6 +67,8 @@ To try a question from your machine, without the browser: `AWS_PROFILE=click AWS
 | Derived tables | `health-chat-tables-570989156105-us-east-1-an/diet/` and `apple/` | replaced on each import |
 | Ledgers | `health-chat-tables-570989156105-us-east-1-an/ledger/` | replaced on each import |
 | Athena query results | `health-chat-tables-570989156105-us-east-1-an/athena-results/` | 7 days |
+| Original photos, analysis copies, and photo metadata | `health-chat-photos-570989156105-us-east-1-an` | retained; the app does not delete them |
+| Chat turns, query results, photo IDs, and activity markers | `health-chat-logs-570989156105-us-east-1-an` | retained; no lifecycle expiration |
 
 Retention rules on the tables bucket: old table versions are deleted after 30 days; Athena results after 7 days.
 Every bucket is private, versioned, encrypted with AWS-managed keys, and blocks public access.
@@ -70,7 +101,7 @@ A day's burn is the recorded burn if one was written; otherwise the default of 2
 
 ## Completeness of days
 
-stuntman-diet marks each day `complete`, `partial`, or `missing`. Older legacy days have no mark, so they are `unknown`. In `diet_days`, `net_reliable` is true only for complete days. The chat leaves partial, missing, and unknown days out of totals and averages unless you ask for them, and says how many it left out. Totals and averages are computed by SQL, not by the model.
+stuntman-diet marks each day `complete`, `partial`, or `missing`; a missing completeness value is `unknown`. Legacy master days are treated as owner-confirmed complete days (`completeness_basis=owner_confirmed_legacy`). In `diet_days`, `net_reliable` marks complete days whose net can be used. Answers are instructed to distinguish incomplete days, state the days included or excluded, and identify all-days versus complete-days figures. Totals and averages are computed by SQL, not by the model.
 
 ## Adding new data
 
@@ -186,12 +217,17 @@ de-duplication is added. Sources: [Sahha: deduplicating health data across weara
 
 ## Model
 
-Used for the question box. Set in one place: the `BedrockModel` parameter default in `infra/template.yaml`
+Used for the question box and photo comparisons. Set in one place: the `BedrockModel` parameter default in `infra/template.yaml`
 (currently `us.amazon.nova-2-lite-v1:0`). Deploy reads that default, so staging and production always match.
 
 ## Privacy
 
 - Health data is not stored in this repo. `.gitignore` blocks data file types.
+- Persistent application PII and health content live in private, encrypted, versioned S3 buckets with public access blocked. Cognito stores login identities; it is not the health-record store.
+- API access requires a valid Cognito token for the configured app client. The separate smoke-test token can reach only the model-check route.
+- Athena processes query data and Bedrock receives the context and analysis images needed for inference. Private storage is not a claim that inference happens locally or that the model never receives personal information.
+- Original photos retain location and device metadata by design. Analysis copies are re-encoded without embedded EXIF location, but visible content, captions, and separately supplied metadata can still be identifying.
+- The browser holds the login token in session storage and may retain unsaved chat turns in local storage for retry. Use a trusted device.
 - Logs record counts and error types, not health content.
 - This is not medical advice. Contact a doctor about urgent symptoms or values.
 
@@ -200,7 +236,7 @@ Used for the question box. Set in one place: the `BedrockModel` parameter defaul
 ```
 src/            server (Hono), auth (Cognito JWT), Bedrock call
 src/ingest/     import: diet, Apple Health, Parquet writing
-public/         browser page: sign-in, model check, guide dropdowns
+public/         browser page: sign-in, chat, photo upload/comparison, model check, guides
 tests/          Vitest tests and node:test deploy tests
 scripts/        deploy, smoke tests, production gate, packaging, mutation check
 infra/          CloudFormation: artifacts, Cognito app clients, Web Function
