@@ -147,6 +147,14 @@ export const CONTEXT_MAX_CHARS = 6000;
 const ANSWER_EXCERPT = 800;
 const EARLIER_LIST_MAX = 1000;
 
+/** Older comparisons saved dated photo headings but not photo ids. Only recover that exact format. */
+export function comparisonPhotoDates(turn: TurnRecord): string[] {
+  const count = /^Compare (\d+) photos(?:$|:)/.exec(turn.question);
+  if (!count) return [];
+  const dates = [...turn.answer.matchAll(/^#{1,6}\s+Photo \d+ \((\d{4}-\d{2}-\d{2})\)\s*$/gm)].map((match) => match[1]!);
+  return dates.length === Number(count[1]) ? dates : [];
+}
+
 /**
  * Builds the context sent with a new question. The last few turns keep an excerpt of their answers. Older turns
  * are reduced to their questions. Previous answers are labelled as possibly stale, so the model re-runs SQL for facts.
@@ -164,7 +172,7 @@ export function buildContext(turns: TurnRecord[]): string {
   }
   for (const t of recent) {
     const excerpt = t.answer.length > ANSWER_EXCERPT ? `${t.answer.slice(0, ANSWER_EXCERPT - 1)}…` : t.answer;
-    parts.push(`Question: ${t.question}\nPrevious answer (excerpt): ${excerpt}`);
+    parts.push(`Question: ${t.question}${t.photo_ids?.length ? `\nPhoto ids: ${t.photo_ids.join(", ")}` : ""}\nPrevious answer (excerpt): ${excerpt}`);
   }
   let text = parts.join("\n\n");
   if (text.length > CONTEXT_MAX_CHARS) text = `${text.slice(0, CONTEXT_MAX_CHARS - 1)}…`;

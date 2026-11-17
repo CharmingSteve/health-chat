@@ -49,6 +49,7 @@ Every bucket is private, versioned, encrypted with AWS-managed keys, and blocks 
 - HEIC photos are decoded in the browser to make the analysis copy. If a HEIC can't be read in the browser, export a JPEG from Photos instead; nothing is uploaded for that file.
 - Each photo is stored in `health-chat-photos-570989156105-us-east-1-an`: the original as you took it (location and device details kept), and a smaller analysis copy made in the browser (re-encoded, so it carries no location). Nothing is deleted.
 - Select two to eight uploaded photos and press **Compare selected photos**. The app compares their analysis copies in date order, describes each photo before comparing, and saves the answer in the current chat (or starts a new one). It should state when lighting, pose, or unclear images prevent a reliable comparison.
+- Continue in that chat to ask about the comparison. The same analysis images are loaded for follow-up questions, including after reopening the chat; only photo IDs, not image bytes, are saved in chat history. Older comparisons recover their photo links only when the dated headings uniquely identify the uploaded photos.
 - Estimates are not measurements. Measured weights and body-composition readings are the reference.
 
 Manual checks (automated tests can't drag files):

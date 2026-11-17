@@ -6,7 +6,7 @@ import type { VerifiedUser } from "./auth.js";
 import { SMOKE_PROMPT, smokeReplyIsCorrect, type Converse } from "./bedrock.js";
 import type { ChatAnswer, ImageInput } from "./chat.js";
 import { isValidPhotoId } from "./photos.js";
-import { buildContext, isValidId, listConversations, readConversation, saveTurn, subjectFrom, type S3Like, type TurnRecord } from "./history.js";
+import { buildContext, comparisonPhotoDates, isValidId, listConversations, readConversation, saveTurn, subjectFrom, type S3Like, type TurnRecord } from "./history.js";
 import { randomUUID } from "node:crypto";
 
 export interface AppDeps {
@@ -17,7 +17,7 @@ export interface AppDeps {
   smokeClientId?: string;
   converse: Converse;
   /** Answers a data question. Absent in environments where the data is not enabled. */
-  ask?: (question: string, context: string, images?: ImageInput[]) => Promise<ChatAnswer>;
+  ask?: (question: string, context: string, images?: ImageInput[], photoIds?: string[]) => Promise<ChatAnswer>;
   /** Chat history in S3 (production only). Absent where history is not enabled. */
   history?: { s3: S3Like; bucket: string; now: () => Date; model: string; retryDelays?: number[] };
   /** Progress photos. Production only. */
@@ -138,10 +138,16 @@ export function createApp(deps: AppDeps): Hono<Env> {
 
     // Earlier turns of the same chat give the model its context. If they cannot be read, the question is still answered.
     let context = "";
+    let photoIds: string[] = [];
+    let legacyPhotoDates: string[] = [];
     let contextLoaded = true;
     if (requestedId && deps.history) {
       try {
-        context = buildContext(await readConversation(deps.history.s3, deps.history.bucket, conversationId));
+        const turns = await readConversation(deps.history.s3, deps.history.bucket, conversationId);
+        context = buildContext(turns);
+        const photoTurn = turns.findLast((turn) => turn.photo_ids?.length || comparisonPhotoDates(turn).length);
+        photoIds = photoTurn?.photo_ids ?? [];
+        if (photoTurn && !photoIds.length) legacyPhotoDates = comparisonPhotoDates(photoTurn);
       } catch {
         contextLoaded = false;
       }
@@ -159,7 +165,15 @@ export function createApp(deps: AppDeps): Hono<Env> {
       images.push({ format, bytes });
     }
     try {
-      const result = await deps.ask(question.trim(), context, images);
+      if (legacyPhotoDates.length && deps.photos) {
+        const available = await deps.photos.list();
+        const matches = legacyPhotoDates.map((date) => available.filter((photo) => photo.date_taken === date));
+        if (new Set(legacyPhotoDates).size !== legacyPhotoDates.length || matches.some((photos) => photos.length !== 1)) {
+          return c.json({ error: "This older comparison did not save its photo links, and its dates do not uniquely identify the photos. Select the photos and compare them again to continue." }, 409);
+        }
+        photoIds = matches.map((photos) => photos[0]!.id);
+      }
+      const result = await deps.ask(question.trim(), context, images, photoIds);
       const subject = typeof fields.subject === "string" && fields.subject.trim() ? fields.subject.trim().slice(0, 80) : subjectFrom(question);
       const turn: TurnRecord = {
         schema: 1,
@@ -308,6 +322,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
       model: deps.history.model,
       rounds: 1,
       queries: [],
+      ...(Array.isArray(body.ids) ? { photo_ids: body.ids.filter((id): id is string => typeof id === "string") } : {}),
     };
     const save = await saveTurn(deps.history.s3, deps.history.bucket, turn, deps.history.retryDelays);
     return c.json({
@@ -354,6 +369,7 @@ function checkTurn(body: unknown): TurnRecord | undefined {
   if (!isValidId(String(t.conversation_id ?? "")) || !isValidId(String(t.turn_id ?? ""))) return undefined;
   if (!str(t.question, 1000) || !str(t.answer, 20000) || !str(t.subject, 80) || !str(t.asked_at, 40)) return undefined;
   if (!Array.isArray(t.queries) || t.queries.length > 20) return undefined;
+  if (t.photo_ids !== undefined && (!Array.isArray(t.photo_ids) || t.photo_ids.length > 20 || !t.photo_ids.every((id): id is string => typeof id === "string" && isValidPhotoId(id)))) return undefined;
   return {
     schema: 1,
     owner: "owner",
@@ -366,5 +382,6 @@ function checkTurn(body: unknown): TurnRecord | undefined {
     model: str(t.model, 200) ? String(t.model) : "",
     rounds: typeof t.rounds === "number" ? t.rounds : 0,
     queries: t.queries as TurnRecord["queries"],
+    ...(Array.isArray(t.photo_ids) ? { photo_ids: t.photo_ids } : {}),
   };
 }

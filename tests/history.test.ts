@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand } from "@aws-sdk/client-s3";
 import {
-  activityKey, buildContext, CONTEXT_MAX_CHARS, isValidId, listConversations, readConversation, RETENTION_DAYS,
+  activityKey, buildContext, comparisonPhotoDates, CONTEXT_MAX_CHARS, isValidId, listConversations, readConversation, RETENTION_DAYS,
   saveTurn, subjectFrom, turnKey, type TurnRecord,
 } from "../src/history.js";
 
@@ -125,6 +125,21 @@ describe("buildContext", () => {
     const long = "x".repeat(50000);
     const turns = Array.from({ length: 20 }, (_, i) => turn({ turn_id: `turn-0000000${i % 10}`, question: `q${i} ${"y".repeat(500)}`, answer: long }));
     expect(buildContext(turns).length).toBeLessThanOrEqual(CONTEXT_MAX_CHARS);
+  });
+
+  it("includes the ids of images used in an earlier answer", () => {
+    expect(buildContext([turn({ photo_ids: ["aaaaaaaa", "bbbbbbbb"] })])).toContain("Photo ids: aaaaaaaa, bbbbbbbb");
+  });
+
+  it("recovers dates only from complete, dated headings in an older comparison", () => {
+    const comparison = turn({
+      question: "Compare 2 photos",
+      answer: "### Photo 1 (2025-01-01)\nDescription\n### Photo 2 (2026-01-01)\nDescription",
+    });
+    expect(comparisonPhotoDates(comparison)).toEqual(["2025-01-01", "2026-01-01"]);
+    expect(comparisonPhotoDates({ ...comparison, question: "What happened?" })).toEqual([]);
+    expect(comparisonPhotoDates({ ...comparison, answer: "Photo 1 might be from 2025-01-01" })).toEqual([]);
+    expect(comparisonPhotoDates({ ...comparison, question: "Compare 3 photos" })).toEqual([]);
   });
 });
 

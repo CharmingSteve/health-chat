@@ -128,11 +128,16 @@ describe("history endpoints", () => {
     s3.send = fakeS3().send.bind(fakeS3());
     const back = fakeS3();
     const { app: app2 } = makeApp({ s3: back });
-    const ok = await app2.request("/api/history/save", { method: "POST", headers: bearer, body: JSON.stringify(failed.turn) });
+    const withPhotos = { ...failed.turn, photo_ids: ["aaaaaaaa", "bbbbbbbb"] };
+    const ok = await app2.request("/api/history/save", { method: "POST", headers: bearer, body: JSON.stringify(withPhotos) });
     expect(ok.status).toBe(200);
     expect(await ok.json()).toMatchObject({ saved: true });
+    const saved = [...back.store.entries()].find(([key]) => key.startsWith("chats/"));
+    expect(JSON.parse(saved![1]).photo_ids).toEqual(withPhotos.photo_ids);
     const bad = await app2.request("/api/history/save", { method: "POST", headers: bearer, body: JSON.stringify({ ...failed.turn, turn_id: "../../x" }) });
     expect(bad.status).toBe(400);
+    const badPhotos = await app2.request("/api/history/save", { method: "POST", headers: bearer, body: JSON.stringify({ ...withPhotos, photo_ids: ["../invalid"] }) });
+    expect(badPhotos.status).toBe(400);
   });
 
   it("is not available in an environment without history (staging)", async () => {

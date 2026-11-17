@@ -63,3 +63,37 @@ console.log(JSON.stringify({ comparison }));
 const plainComparison = comparison.replaceAll("**", "");
 assert.match(plainComparison, /2026-01-01:\s*left red,\s*right blue/i);
 assert.match(plainComparison, /2026-02-01:\s*left blue,\s*right red/i);
+
+const panels = [
+  { id: "panel-aaaaaaaa", date_taken: "2026-01-01", image: { format: "png" as const, bytes: image() } },
+  { id: "panel-bbbbbbbb", date_taken: "2026-02-01", image: { format: "png" as const, bytes: image(true) } },
+];
+const photos = {
+  list: async () => panels.map(({ id, date_taken }) => ({ id, date_taken, setting: "Synthetic panel", place: null })),
+  load: async (ids: string[]) => panels.filter((panel) => ids.includes(panel.id)),
+};
+const followupQuestion = 'These are synthetic colour panels, not body photos. Using the attached images, reply with "2026-01-01: left red, right blue" and "2026-02-01: left blue, right red", substituting the colours you actually see.';
+const runQuery = async (sql: string) => ({ ok: false, columns: [], rows: [], row_count: 0, truncated: false, bytes_scanned: 0, sql_run: sql, error: "Queries are disabled for the synthetic image check" });
+const followup = await answerQuestion(followupQuestion, {
+  callModel: createChatModel(modelId), runQuery, photos,
+}, comparison, [], panels.map((panel) => panel.id));
+console.log(JSON.stringify({ followup: followup.answer, photos_shown: followup.photos_shown }));
+assert.match(followup.answer.replaceAll("**", ""), /2026-01-01:\s*left red,\s*right blue/i);
+assert.match(followup.answer.replaceAll("**", ""), /2026-02-01:\s*left blue,\s*right red/i);
+assert.deepEqual(followup.photos_shown, panels.map((panel) => panel.id));
+
+let firstCall = true;
+const liveModel = createChatModel(modelId);
+const toolFollowup = await answerQuestion(followupQuestion, {
+  callModel: async (messages) => {
+    if (firstCall) {
+      firstCall = false;
+      return { kind: "tool_use", text: "", toolUses: [{ toolUseId: "synthetic-photos", name: "show_photos", input: { ids: panels.map((panel) => panel.id) } }] };
+    }
+    return liveModel(messages);
+  },
+  runQuery, photos,
+}, "Synthetic image test; use show_photos to view the panels.");
+console.log(JSON.stringify({ toolFollowup: toolFollowup.answer, photos_shown: toolFollowup.photos_shown }));
+assert.match(toolFollowup.answer.replaceAll("**", ""), /2026-01-01:\s*left red,\s*right blue/i);
+assert.match(toolFollowup.answer.replaceAll("**", ""), /2026-02-01:\s*left blue,\s*right red/i);
