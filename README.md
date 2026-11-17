@@ -42,6 +42,20 @@ To try a question from your machine, without the browser: `AWS_PROFILE=click AWS
 Retention rules on the tables bucket: old table versions are deleted after 30 days; Athena results after 7 days.
 Every bucket is private, versioned, encrypted with AWS-managed keys, and blocks public access.
 
+## Chat history
+
+Every question and answer is saved in `health-chat-logs-570989156105-us-east-1-an`, written directly by the app (no proxy).
+
+- **What is kept:** each turn is one object: question, answer, the SQL run, and the result rows (up to 500 per query), with the time and the model. Layout: `chats/<chat id>/<time>_<turn id>.json`. A small `activity/<chat id>.json` holds each chat's subject and last time, and is overwritten per turn.
+- **Never deleted:** the app has no delete permission on this bucket, the bucket keeps every version, and it has no lifecycle rules.
+- **Saving:** the answer is shown straight away. The server retries the save four times (about 12 seconds). If that fails, the page resends the turn every 15 seconds for about five minutes. If it still fails, the turn is kept in this browser and resent the next time you open the page. Until it is saved, a banner says so.
+- **The list:** "Chats from the last 4 months" shows chats whose last question is within 120 days. An older chat drops off the list when it has not been used for 4 months, but it stays in the bucket and reopens if you use it again.
+- **Context for new questions:** the last six turns are sent with an excerpt of each answer, and earlier questions in the same chat are listed by text. The total is capped at 6,000 characters. Earlier answers are labelled as possibly out of date, so the model re-runs SQL for figures.
+- **Where it is enabled:** production only. Staging has no history.
+- `scripts/ask-local.ts` does not save history; it is for checks only.
+
+Health content is in these records, so treat the bucket like the others: private, with no public access.
+
 ## Setup and commands
 
 Requirements: Node.js 24, AWS CLI v2, the `click` profile.

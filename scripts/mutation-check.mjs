@@ -22,6 +22,10 @@ const mutations = [
     from: "if (!ALLOWED.has(name) && !ctes.has(name)) {", to: "if (false) {" },
   { name: "let a comment through the query check", file: "src/query.ts",
     from: 'if (/--|\\/\\*/.test(trimmed))', to: "if (false)" },
+  { name: "skip the save retries", file: "src/history.ts",
+    from: "if (wait === undefined) break;", to: "break;" },
+  { name: "drop the context size cap", file: "src/history.ts",
+    from: "if (text.length > CONTEXT_MAX_CHARS) text = ", to: "if (false) text = " },
   { name: "loose model reply check", file: "src/bedrock.ts",
     from: 'return reply.trim() === "4";', to: 'return reply.includes("4");' },
 ];

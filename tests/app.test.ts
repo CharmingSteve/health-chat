@@ -187,8 +187,8 @@ describe("POST /api/ask", () => {
     const { app } = makeApp({ ask });
     const res = await post(app, { question: "  how many labs?  " });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ answer: "echo: how many labs?", queries: [], rounds: 1 });
-    expect(ask).toHaveBeenLastCalledWith("how many labs?");
+    expect(await res.json()).toMatchObject({ answer: "echo: how many labs?", queries: [], rounds: 1, history_enabled: false });
+    expect(ask).toHaveBeenLastCalledWith("how many labs?", "");
   });
 
   it("refuses with 401 and never calls the assistant when there is no token", async () => {
