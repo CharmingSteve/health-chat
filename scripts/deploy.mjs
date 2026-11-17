@@ -57,6 +57,9 @@ const TABLES_BUCKET = "health-chat-tables-570989156105-us-east-1-an";
 // Chat history. Never expires: no lifecycle rules are set on this bucket.
 const LOGS_BUCKET = "health-chat-logs-570989156105-us-east-1-an";
 ensureBucket(LOGS_BUCKET);
+// Progress photos: private, versioned, nothing deleted. Originals keep their location data; analysis copies do not.
+const PHOTOS_BUCKET = "health-chat-photos-570989156105-us-east-1-an";
+ensureBucket(PHOTOS_BUCKET);
 deploy("infra/data.yaml", "health-chat-data", [`TablesBucket=${TABLES_BUCKET}`]);
 
 deploy("infra/artifacts.yaml", artifactsStack);
@@ -89,6 +92,7 @@ deploy(
     `DataEnabled=${environment === "production" ? "true" : "false"}`,
     `TablesBucket=${TABLES_BUCKET}`,
     `LogsBucket=${LOGS_BUCKET}`,
+    `PhotosBucket=${PHOTOS_BUCKET}`,
     `DietJobName=${DIET_JOB}`,
   ],
   true,

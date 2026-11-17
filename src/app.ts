@@ -19,6 +19,8 @@ export interface AppDeps {
   ask?: (question: string, context: string) => Promise<ChatAnswer>;
   /** Chat history in S3 (production only). Absent where history is not enabled. */
   history?: { s3: S3Like; bucket: string; now: () => Date; model: string; retryDelays?: number[] };
+  /** Progress photos. Production only. */
+  photos?: import("./photo-service.js").PhotoService;
   /** Diet import status (the last successful run and the last attempt), and the refresh trigger. Production only. */
   diet?: { readStatus: () => Promise<unknown>; startRefresh: () => Promise<void> };
   /** Public browser config. Client ids and the hosted-UI domain are not secrets. */
@@ -193,6 +195,48 @@ export function createApp(deps: AppDeps): Hono<Env> {
       return c.json({ started: true }, 202);
     } catch {
       return c.json({ error: "The refresh could not be started. Try again." }, 503);
+    }
+  });
+
+  app.get("/api/photos", async (c) => {
+    if (!deps.photos) return c.json({ error: "Photos are not enabled in this environment" }, 503);
+    try {
+      return c.json({ photos: await deps.photos.list() });
+    } catch {
+      return c.json({ error: "Photos could not be read. Try again." }, 503);
+    }
+  });
+
+  app.post("/api/photos/upload-form", async (c) => {
+    if (!deps.photos) return c.json({ error: "Photos are not enabled in this environment" }, 503);
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    try {
+      return c.json(await deps.photos.uploadForms({ date_taken: body.date_taken, original_type: body.original_type }));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "Bad request" }, 400);
+    }
+  });
+
+  app.post("/api/photos", async (c) => {
+    if (!deps.photos) return c.json({ error: "Photos are not enabled in this environment" }, 503);
+    const body = await c.req.json().catch(() => null);
+    try {
+      return c.json(await deps.photos.save(body), 201);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "Bad request" }, 400);
+    }
+  });
+
+  app.post("/api/photos/compare", async (c) => {
+    if (!deps.photos) return c.json({ error: "Photos are not enabled in this environment" }, 503);
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    try {
+      return c.json({ answer: await deps.photos.compare({ ids: body.ids, question: body.question }) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (/choose|must be|not found/i.test(message)) return c.json({ error: message }, 400);
+      console.error("Photo comparison failed", error instanceof Error ? error.name : "unknown");
+      return c.json({ error: "The comparison could not be made. Try again." }, 502);
     }
   });
 

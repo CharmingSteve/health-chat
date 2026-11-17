@@ -33,6 +33,10 @@ Parameters:
   LogsBucket:
     Type: String
     Description: Chat history bucket (chats/ and activity/). Created by scripts/ensure-bucket.mjs.
+  PhotosBucket:
+    Type: String
+    Default: health-chat-photos-570989156105-us-east-1-an
+    Description: Progress photos (originals and analysis copies, metadata). Private, versioned, nothing deleted.
   DietJobName:
     Type: String
     Default: health-chat-diet-job
@@ -118,6 +122,20 @@ Resources:
           - Effect: Allow
             Action: [s3:ListBucket]
             Resource: !Sub arn:${AWS::Partition}:s3:::${LogsBucket}
+          # Progress photos: upload (originals, analysis copies, metadata) and read. No delete permission.
+          - Effect: Allow
+            Action: [s3:GetObject, s3:PutObject]
+            Resource:
+              - !Sub arn:${AWS::Partition}:s3:::${PhotosBucket}/originals/*
+              - !Sub arn:${AWS::Partition}:s3:::${PhotosBucket}/analysis/*
+              - !Sub arn:${AWS::Partition}:s3:::${PhotosBucket}/meta/*
+          - Effect: Allow
+            Action: [s3:ListBucket]
+            Resource: !Sub arn:${AWS::Partition}:s3:::${PhotosBucket}
+          # Owner's stated pattern file (read only).
+          - Effect: Allow
+            Action: [s3:GetObject]
+            Resource: !Sub arn:${AWS::Partition}:s3:::${TablesBucket}/notes/*
           # Diet import status (read) and the "refresh now" trigger (invoke, asynchronously). Nothing else.
           - Effect: Allow
             Action: [s3:GetObject]
@@ -159,6 +177,7 @@ Resources:
           DATA_ENABLED: !Ref DataEnabled
           LOGS_BUCKET: !Ref LogsBucket
           TABLES_BUCKET: !Ref TablesBucket
+          PHOTOS_BUCKET: !Ref PhotosBucket
           DIET_JOB_NAME: !Ref DietJobName
           ATHENA_WORKGROUP: health-chat-data
           GLUE_DATABASE: health_chat
