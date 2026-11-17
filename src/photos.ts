@@ -65,6 +65,22 @@ export function analysisKey(date: string, id: string): string {
   return `analysis/${date}_${id}.jpg`;
 }
 
+/**
+ * The analysis copy's key for one photo, found from the record's name. Only key listings are read, never the records,
+ * so a thumbnail costs one listing instead of a read of every photo record.
+ */
+export async function analysisKeyFor(client: S3Client, bucket: string, id: string): Promise<string | null> {
+  const suffix = `_${id}.json`;
+  let token: string | undefined;
+  do {
+    const page = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: "meta/", ContinuationToken: token }));
+    const hit = (page.Contents ?? []).map((item) => item.Key ?? "").find((key) => key.endsWith(suffix));
+    if (hit) return analysisKey(hit.slice("meta/".length, hit.length - suffix.length), id);
+    token = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (token);
+  return null;
+}
+
 export function metaKey(date: string, id: string): string {
   return `meta/${date}_${id}.json`;
 }
