@@ -8,6 +8,4 @@ const out = resolve(root, "public", "vendor");
 mkdirSync(out, { recursive: true });
 copyFileSync(resolve(root, "node_modules/exifr/dist/full.esm.mjs"), resolve(out, "exifr.mjs"));
 copyFileSync(resolve(root, "node_modules/libheif-js/libheif-wasm/libheif-bundle.mjs"), resolve(out, "libheif.mjs"));
-// The bundle fetches libheif.wasm from its own URL (/vendor/libheif.wasm), so the decoder needs this file too.
-copyFileSync(resolve(root, "node_modules/libheif-js/libheif-wasm/libheif.wasm"), resolve(out, "libheif.wasm"));
 console.info("Copied browser libraries to public/vendor");

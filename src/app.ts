@@ -36,11 +36,10 @@ const STATIC: Record<string, { file: string; type: string }> = {
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
   "/styles.css": { file: "styles.css", type: "text/css; charset=utf-8" },
 };
-// Browser libraries copied by scripts/vendor-browser-libs.mjs. Binary (the wasm) is served as bytes, not text.
+// Browser libraries copied by scripts/vendor-browser-libs.mjs. libheif.mjs embeds its wasm, so no .wasm file is needed.
 const VENDOR: Record<string, { file: string; type: string }> = {
   "/vendor/exifr.mjs": { file: "vendor/exifr.mjs", type: "text/javascript; charset=utf-8" },
   "/vendor/libheif.mjs": { file: "vendor/libheif.mjs", type: "text/javascript; charset=utf-8" },
-  "/vendor/libheif.wasm": { file: "vendor/libheif.wasm", type: "application/wasm" },
 };
 
 export function createApp(deps: AppDeps): Hono<Env> {
