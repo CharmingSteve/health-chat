@@ -93,7 +93,7 @@ export async function runDietImport(store: ObjectStore, b: DietBuckets, trigger:
       raw_text: "VARCHAR", calories: "DOUBLE", quantity: "DOUBLE", unit: "VARCHAR", food_id: "VARCHAR", superseded: "BOOLEAN",
     }, entriesPath);
     const dayCount = await writeParquet(days, {
-      owner: "VARCHAR", day: "VARCHAR", burn_total: "DOUBLE", burn_effective: "DOUBLE", burn_basis: "VARCHAR", completeness: "VARCHAR", eligibility: "VARCHAR", burn_source: "VARCHAR",
+      owner: "VARCHAR", day: "VARCHAR", burn_total: "DOUBLE", burn_effective: "DOUBLE", burn_basis: "VARCHAR", completeness: "VARCHAR", net_reliable: "BOOLEAN", eligibility: "VARCHAR", burn_source: "VARCHAR",
     }, daysPath);
     await store.put(b.tablesBucket, `${tableLocation("diet_entries")}data.parquet`, readFileSync(entriesPath));
     await store.put(b.tablesBucket, `${tableLocation("diet_days")}data.parquet`, readFileSync(daysPath));

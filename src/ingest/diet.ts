@@ -24,13 +24,16 @@ export interface DietDay {
   burn_effective: number;
   /** "recorded" when the owner's burn was written; "assumed_default" when DEFAULT_BURN is assumed. */
   burn_basis: "recorded" | "assumed_default";
-  completeness: string | null;
+  /** complete | partial | missing (from stuntman-diet), or unknown for days from the legacy master (no completeness recorded). */
+  completeness: string;
+  /** True only when the whole day's intake is known: completeness is complete. Net calories are reliable only then. */
+  net_reliable: boolean;
   eligibility: string | null;
   burn_source: string | null;
 }
 
 /** Day metadata as the app wrote it; buildDietDays adds the effective burn. */
-export type DietMeta = Omit<DietDay, "burn_effective" | "burn_basis">;
+export type DietMeta = Omit<DietDay, "burn_effective" | "burn_basis" | "completeness" | "net_reliable"> & { completeness: string | null };
 
 /**
  * The owner's rule: a day burns DEFAULT_BURN kilocalories unless a burn is recorded. Recorded burns are written only
@@ -56,7 +59,8 @@ export function buildDietDays(entries: DietEntry[], metaDays: DietMeta[], owner:
       burn_total: m?.burn_total ?? null,
       burn_effective: recorded ? (m!.burn_total as number) : DEFAULT_BURN,
       burn_basis: recorded ? "recorded" : "assumed_default",
-      completeness: m?.completeness ?? null,
+      completeness: m?.completeness ?? "unknown",
+      net_reliable: m?.completeness === "complete",
       eligibility: m?.eligibility ?? null,
       burn_source: m?.burn_source ?? null,
     };

@@ -46,6 +46,10 @@ Every bucket is private, versioned, encrypted with AWS-managed keys, and blocks 
 
 A day's burn is the recorded burn if one was written; otherwise the default of 2,000 kcal is assumed. stuntman-diet writes a burn only when it is above 2,000 (exercise), so a day without one is a default day. In `diet_days`, `burn_effective` is the burn used for net calories and `burn_basis` says whether it was `recorded` or `assumed_default`. Days with no food or burn entries are not tracked, and no burn is assumed for them. The chat labels assumed burns each time it uses them.
 
+## Completeness of days
+
+stuntman-diet marks each day `complete`, `partial`, or `missing`. Older legacy days have no mark, so they are `unknown`. In `diet_days`, `net_reliable` is true only for complete days. The chat leaves partial, missing, and unknown days out of totals and averages unless you ask for them, and says how many it left out. Totals and averages are computed by SQL, not by the model.
+
 ## Adding new data
 
 Run these from the repo root, with `export AWS_PROFILE=click AWS_REGION=us-east-1`. Each import reads the sources again and replaces the tables, so re-running is safe. Afterwards, check the ledger (below) and ask a test question.
