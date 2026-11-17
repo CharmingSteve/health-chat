@@ -126,7 +126,7 @@ describe("medication and forecast rules", () => {
   });
   it("shows all days with counts, not a silent subset", () => {
     expect(prompt).toContain("Show every day in the period");
-    expect(prompt).toContain("Legacy days (completeness unknown) are part of the record");
+    expect(prompt).toContain("Legacy master days are complete days");
   });
   it("forbids predicting future lab values", () => {
     expect(prompt).toContain("never predict a future lab value");
