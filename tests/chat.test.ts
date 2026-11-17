@@ -120,6 +120,14 @@ describe("medication and forecast rules", () => {
   it("requires totals and averages to come from SQL", () => {
     expect(prompt).toContain("with SQL (SUM, AVG, COUNT)");
   });
+  it("uses the full range of data by default and says which period it used", () => {
+    expect(prompt).toContain("use all the data the tables hold");
+    expect(prompt).toContain("Never narrow the period on your own");
+  });
+  it("shows all days with counts, not a silent subset", () => {
+    expect(prompt).toContain("Show every day in the period");
+    expect(prompt).toContain("Legacy days (completeness unknown) are part of the record");
+  });
   it("forbids predicting future lab values", () => {
     expect(prompt).toContain("never predict a future lab value");
   });

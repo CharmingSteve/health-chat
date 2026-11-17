@@ -84,8 +84,11 @@ export async function runDietImport(store: ObjectStore, b: DietBuckets, trigger:
 
     // 3. Parse, apply the named exclusions, and write the tables.
     const stuntman = parseSnapshotLines(lines, OWNER);
-    const { kept: entries, excluded } = applyExclusions([...stuntman.entries, ...legacyEntries]);
-    const days: DietDay[] = buildDietDays(entries, stuntman.days, OWNER);
+    const combined = [...stuntman.entries, ...legacyEntries];
+    const { kept: entries, excluded } = applyExclusions(combined);
+    const keptDays = new Set(entries.map((e) => e.day));
+    const droppedDays = new Set(combined.map((e) => e.day).filter((d) => !keptDays.has(d)));
+    const days: DietDay[] = buildDietDays(entries, stuntman.days, OWNER, droppedDays);
     const entriesPath = join(work, "diet_entries.parquet");
     const daysPath = join(work, "diet_days.parquet");
     const entryCount = await writeParquet(entries, {

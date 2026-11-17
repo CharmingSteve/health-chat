@@ -231,3 +231,11 @@ describe("completeness and net reliability", () => {
     expect(rows.find((r) => r.day === "2026-02-02")).toMatchObject({ completeness: "complete", net_reliable: true });
   });
 });
+
+describe("dropped days", () => {
+  it("removes a day whose entries were all excluded, even if it has metadata", async () => {
+    const { buildDietDays } = await import("../src/ingest/diet.js");
+    const meta = [{ owner: OWNER, day: "2025-01-05", burn_total: 2000, completeness: "complete", eligibility: "tracked", burn_source: "default" }];
+    expect(buildDietDays([], meta, OWNER, new Set(["2025-01-05"]))).toEqual([]);
+  });
+});

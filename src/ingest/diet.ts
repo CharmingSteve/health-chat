@@ -45,10 +45,12 @@ export const DEFAULT_BURN = 2000;
  * One row for every day that has a food or burn entry, and for every day the app has metadata for.
  * Days with no entries at all are not included: they were not tracked, so no burn is assumed for them.
  */
-export function buildDietDays(entries: DietEntry[], metaDays: DietMeta[], owner: string): DietDay[] {
+export function buildDietDays(entries: DietEntry[], metaDays: DietMeta[], owner: string, droppedDays: Set<string> = new Set()): DietDay[] {
   const meta = new Map(metaDays.map((d) => [d.day, d]));
   const tracked = new Set(entries.filter((e) => !e.superseded).map((e) => e.day));
   for (const day of meta.keys()) tracked.add(day);
+  // A day whose entries were all removed by a named exclusion is not a tracked day.
+  for (const day of droppedDays) tracked.delete(day);
   return [...tracked].sort().map((day) => {
     const m = meta.get(day);
     // A burn is written only when it is above the default (exercise). A stored burn equal to the default is the default.
