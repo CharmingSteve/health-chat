@@ -19,6 +19,21 @@
 
   <main id="app" hidden>
     <section>
+      <h2>Ask about your data</h2>
+      <p class="muted">Answers come from SQL over your tables. Each answer shows the queries it ran. Not medical advice.</p>
+      <form id="ask-form">
+        <label for="question">Question</label>
+        <textarea id="question" rows="3" maxlength="1000" placeholder="For example: what were my HbA1c results, and how many workouts of each type did I log in 2026?" required></textarea>
+        <div class="row">
+          <button id="ask-button" type="submit">Ask</button>
+          <span id="ask-status" class="muted"></span>
+        </div>
+      </form>
+      <div id="answer" class="answer" aria-live="polite"></div>
+      <div id="queries"></div>
+    </section>
+
+    <section>
       <h2>Status</h2>
       <p id="data-status" class="muted">No health data is loaded yet. Ingest has not been built.</p>
       <p>Model setting: <code>BedrockModel</code> in <code>infra/template.yaml</code>.</p>
@@ -100,6 +115,49 @@
         <ul>
           <li>Only folders on the ingest allowlist are read. Anything else is ignored.</li>
           <li>No other people's data is used.</li>
+        </ul>
+      </details>
+
+      <details>
+        <summary>Where your data lives, and how long it is kept</summary>
+        <ul>
+          <li>Raw sources (not changed by the app): the Apple Health bucket, the medical bucket, the stuntman-diet puddle bucket, and the diet bucket copy.</li>
+          <li>Derived tables (Parquet): the tables bucket, under <code>diet/</code> and <code>apple/</code>. Each run overwrites the current files.</li>
+          <li>Old versions of table files are deleted after 30 days. Athena query results are deleted after 7 days.</li>
+          <li>Current tables and raw copies are kept until you delete them.</li>
+          <li>Every bucket is private, encrypted with AWS-managed keys, and versioned. Ledgers in <code>ledger/</code> record which source files each run read.</li>
+        </ul>
+      </details>
+
+      <details>
+        <summary>What "import" means here</summary>
+        <ul>
+          <li><strong>Upload</strong> copies a file into a bucket. Nothing is read or changed.</li>
+          <li><strong>Import</strong> (<code>npm run ingest</code>) reads the source files, checks and cleans them, and writes Parquet tables. It can run again safely: the source is re-read and the tables replaced.</li>
+          <li>Import never changes a source file. It stops with an error on a row it cannot read, rather than guessing.</li>
+          <li>Import runs on your machine with the <code>click</code> profile, because the 1.6 GiB Apple export is too large for a Lambda run.</li>
+        </ul>
+      </details>
+
+      <details>
+        <summary>Apple Health: read before you total anything</summary>
+        <ul>
+          <li>The export holds records from every source (iPhone, Apple Watch, and apps). Adding them up directly can count the same activity twice.</li>
+          <li>Totals should use one source per time window, or the Health app's own statistics. The app does not yet de-duplicate, so its totals are raw sums.</li>
+          <li>Every workout type is kept: walking, skating, CrossFit, and others.</li>
+          <li>Routes are GPX tracks. Distances are summed between points, so they are approximate.</li>
+          <li>ECG recordings are kept as samples in microvolts. Classifications come from the watch, not from a doctor.</li>
+        </ul>
+      </details>
+
+      <details>
+        <summary>Diet data: sources and corrections</summary>
+        <ul>
+          <li>Two sources: the legacy master CSV (May 2025 to March 2026) and the stuntman-diet nightly export (from October 2026).</li>
+          <li>The two sources have no days in common, so nothing is counted twice.</li>
+          <li>Superseded entries are kept and marked, so you can see what was corrected.</li>
+          <li>Seven identical entries dated 5 January 2025 were excluded by a named rule, and the count is recorded in the ledger.</li>
+          <li>Legacy dates are day-first (01/05/2025 is 1 May 2025).</li>
         </ul>
       </details>
 

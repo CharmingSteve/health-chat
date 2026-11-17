@@ -22,6 +22,16 @@ Parameters:
     Type: String
   SmokeClientId:
     Type: String
+  DataEnabled:
+    # "true" only for production: the app may then query the health tables. Staging never reads real data.
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+  TablesBucket:
+    Type: String
+    Description: Bucket holding warehouse/<table>/data.parquet and athena-results/
+Conditions:
+  DataOn: !Equals [!Ref DataEnabled, "true"]
 Resources:
   WebLogGroup:
     Type: AWS::Logs::LogGroup
@@ -64,6 +74,34 @@ Resources:
                 Condition:
                   StringLike:
                     bedrock:InferenceProfileArn: !Sub arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/${BedrockModel}
+  # Read-only access to the health tables, only in production (DataOn). Staging gets no data permissions.
+  DataAccessPolicy:
+    Type: AWS::IAM::Policy
+    Condition: DataOn
+    Properties:
+      PolicyName: health-chat-data-read
+      Roles: [!Ref WebFunctionRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: [athena:StartQueryExecution, athena:GetQueryExecution, athena:GetQueryResults, athena:StopQueryExecution]
+            Resource: !Sub arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:workgroup/health-chat-data
+          - Effect: Allow
+            Action: [glue:GetDatabase, glue:GetTable, glue:GetTables, glue:GetPartitions, glue:GetPartition]
+            Resource:
+              - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog
+              - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/health_chat
+              - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/health_chat/*
+          - Effect: Allow
+            Action: [s3:GetObject]
+            Resource: !Sub arn:${AWS::Partition}:s3:::${TablesBucket}/warehouse/*
+          - Effect: Allow
+            Action: [s3:GetBucketLocation, s3:ListBucket]
+            Resource: !Sub arn:${AWS::Partition}:s3:::${TablesBucket}
+          - Effect: Allow
+            Action: [s3:GetObject, s3:PutObject]
+            Resource: !Sub arn:${AWS::Partition}:s3:::${TablesBucket}/athena-results/*
   WebFunction:
     Type: AWS::Lambda::WebFunction
     Properties:
@@ -95,6 +133,9 @@ Resources:
           COGNITO_DOMAIN: !Ref CognitoDomain
           COGNITO_CLIENT_ID: !Ref CognitoClientId
           SMOKE_CLIENT_ID: !Ref SmokeClientId
+          DATA_ENABLED: !Ref DataEnabled
+          ATHENA_WORKGROUP: health-chat-data
+          GLUE_DATABASE: health_chat
       BuildConfig:
         RuntimeConfig:
           Runtime: nodejs24.x

@@ -4,6 +4,7 @@ import { Hono, type Context, type Next } from "hono";
 import { errors, type JWTPayload } from "jose";
 import type { VerifiedUser } from "./auth.js";
 import { SMOKE_PROMPT, smokeReplyIsCorrect, type Converse } from "./bedrock.js";
+import type { ChatAnswer } from "./chat.js";
 
 export interface AppDeps {
   /** Verifies a bearer token. Throws a jose error for bad tokens, anything else for service failures. */
@@ -12,6 +13,8 @@ export interface AppDeps {
   clientId: string;
   smokeClientId?: string;
   converse: Converse;
+  /** Answers a data question. Absent in environments where the data is not enabled. */
+  ask?: (question: string) => Promise<ChatAnswer>;
   /** Public browser config. Client ids and the hosted-UI domain are not secrets. */
   browserConfig: { domain: string; clientId: string };
   publicDir: string;
@@ -84,6 +87,25 @@ export function createApp(deps: AppDeps): Hono<Env> {
     } catch (error) {
       console.error("Smoke model call failed", error instanceof Error ? error.name : "unknown");
       return c.json({ ok: false, error: "Model call failed" }, 502);
+    }
+  });
+
+  app.post("/api/ask", async (c) => {
+    if (!deps.ask) return c.json({ error: "Data questions are not enabled in this environment" }, 503);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Send JSON with a question" }, 400);
+    }
+    const question = typeof body === "object" && body !== null ? (body as { question?: unknown }).question : undefined;
+    if (typeof question !== "string" || question.trim().length === 0) return c.json({ error: "Question is required" }, 400);
+    if (question.length > 1000) return c.json({ error: "Question is too long (1000 characters at most)" }, 400);
+    try {
+      return c.json(await deps.ask(question.trim()));
+    } catch (error) {
+      console.error("Chat failed", error instanceof Error ? error.name : "unknown");
+      return c.json({ error: "The assistant could not answer. Try again." }, 502);
     }
   });
 
