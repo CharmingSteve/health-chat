@@ -20,10 +20,11 @@ describe("dates", () => {
 });
 
 describe("storage keys and ids", () => {
-  it("keeps originals and analysis copies apart, and accepts only jpg and png originals", () => {
+  it("keeps originals and analysis copies apart, and accepts jpg, png, and HEIC originals only", () => {
     expect(originalKey("2026-11-17", "abcdefgh", "image/jpeg")).toBe("originals/2026-11-17_abcdefgh.jpg");
     expect(analysisKey("2026-11-17", "abcdefgh")).toBe("analysis/2026-11-17_abcdefgh.jpg");
-    expect(() => originalKey("2026-11-17", "abcdefgh", "image/gif")).toThrow("Only jpg and png");
+    expect(originalKey("2026-11-17", "abcdefgh", "image/heic")).toBe("originals/2026-11-17_abcdefgh.heic");
+    expect(() => originalKey("2026-11-17", "abcdefgh", "image/gif")).toThrow("Only jpg, png, and HEIC");
   });
   it("accepts only plain photo ids", () => {
     expect(isValidPhotoId("abcdefgh-1234")).toBe(true);

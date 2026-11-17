@@ -8,13 +8,15 @@ import { randomUUID } from "node:crypto";
 
 export const PHOTO_MAX_BYTES = 10 * 1024 * 1024;
 export const OWNER_TIMEZONE = "Asia/Jerusalem";
-const ORIGINAL_TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png" };
+const ORIGINAL_TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/heic": "heic", "image/heif": "heif" };
+export const DATE_SOURCES = ["metadata", "file", "today", "manual"] as const;
 
 export interface PhotoMeta {
   schema: 1;
   owner: string;
   id: string;
-  date_taken: string; // yyyy-mm-dd, set by the owner (defaults to today)
+  date_taken: string; // yyyy-mm-dd: from the photo's metadata, the file date, today, or typed by the owner
+  date_source: "metadata" | "file" | "today" | "manual";
   uploaded_at: string;
   setting: string | null;
   pose: string | null;
@@ -47,9 +49,13 @@ export function newPhotoId(): string {
   return randomUUID();
 }
 
+export function isOriginalType(contentType: string): boolean {
+  return contentType in ORIGINAL_TYPES;
+}
+
 export function originalKey(date: string, id: string, contentType: string): string {
   const ext = ORIGINAL_TYPES[contentType];
-  if (!ext) throw new Error("Only jpg and png originals are accepted");
+  if (!ext) throw new Error("Only jpg, png, and HEIC originals are accepted");
   return `originals/${date}_${id}.${ext}`;
 }
 
@@ -80,11 +86,14 @@ export function validateMeta(input: unknown, owner: string): PhotoMeta {
   const text = (v: unknown, max: number) => (v === undefined || v === null || v === "" ? null : typeof v === "string" && v.length <= max ? v : (() => { throw new Error("Field too long or not text"); })());
   if (typeof m.id !== "string" || !isValidPhotoId(m.id)) throw new Error("Bad photo id");
   if (typeof m.original_key !== "string" || typeof m.analysis_key !== "string") throw new Error("Missing object keys");
+  const source = m.date_source === undefined ? "manual" : m.date_source;
+  if (typeof source !== "string" || !(DATE_SOURCES as readonly string[]).includes(source)) throw new Error("Bad date source");
   return {
     schema: 1,
     owner,
     id: m.id,
     date_taken: validateDateTaken(m.date_taken, new Date()),
+    date_source: source as PhotoMeta["date_source"],
     uploaded_at: new Date().toISOString(),
     setting: text(m.setting, 120),
     pose: text(m.pose, 120),

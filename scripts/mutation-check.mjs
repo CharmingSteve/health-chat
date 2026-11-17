@@ -32,6 +32,10 @@ const mutations = [
     from: "Give visual estimates, and label every estimate 'visual estimate'.", to: "Give estimates." },
   { name: "present the owner's stated pattern as measured", file: "src/owner-notes.ts",
     from: "NOT measured, and never part", to: "measured, and never part" },
+  { name: "ignore the photo's own date and use the file date", file: "src/photo-dates.ts",
+    from: 'if (fromExif) result = { date: fromExif, source: "metadata" };', to: "if (false) result = {};" },
+  { name: "drop the future-date warning", file: "src/photo-dates.ts",
+    from: "const warning = result.date > input.today ?", to: "const warning = false ?" },
   { name: "loose model reply check", file: "src/bedrock.ts",
     from: 'return reply.trim() === "4";', to: 'return reply.includes("4");' },
 ];

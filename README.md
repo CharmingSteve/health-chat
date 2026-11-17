@@ -44,10 +44,20 @@ Every bucket is private, versioned, encrypted with AWS-managed keys, and blocks 
 
 ## Progress photos
 
-- Upload from the page. The date defaults to today; the calendar sets the date the photo was taken.
+- Drag photos into the photo section from Photos or Finder (Chrome or Safari on a Mac), or click the area to choose files. JPG, PNG, and HEIC are accepted, up to 20 files at a time, 10 MB each.
+- The date comes from the photo itself (the camera's capture date). If a photo has none, the file's date is used, and failing that, today. Each row shows where its date came from, and you can change it before uploading. A future date or one before 2000 is flagged, not blocked.
+- HEIC photos are decoded in the browser to make the analysis copy. If a HEIC can't be read in the browser, export a JPEG from Photos instead; nothing is uploaded for that file.
 - Each photo is stored in `health-chat-photos-570989156105-us-east-1-an`: the original as you took it (location and device details kept), and a smaller analysis copy made in the browser (re-encoded, so it carries no location). Nothing is deleted.
 - Compare two to eight photos from the page. They are compared in date order. The answer gives visual estimates, labelled as such, with a range and a confidence, and describes what it can see. Injuries: it describes swelling, redness, bruising, or bleeding. For severe signs it tells you to seek urgent care.
 - Estimates are not measurements. Measured weights and body-composition readings are the reference.
+
+Manual checks (automated tests can't drag files):
+
+- Drag a HEIC from Photos into Chrome on the Mac. The date should match the photo.
+- Drag a HEIC from Finder into Chrome.
+- Drag a JPEG from Photos into Chrome.
+- Add a photo from Safari on the iPhone.
+- Drop several files at once. Each row shows its own date.
 
 ## Owner's stated pattern
 
@@ -130,7 +140,7 @@ npm run mutation               # plants known bugs and fails if the tests miss a
 npm run ingest:diet     # import diet data into the tables bucket
 npm run ingest:apple    # import Apple Health (reads ~1.6 GiB; takes a while)
 npm run ingest:medical  # import lab results, medical PDF text, and the image index
-npm run dev                    # local server on http://localhost:3000
+npm run dev                    # local server on http://localhost:3000 (copies the browser libraries first)
 ```
 
 Deployment is done by CI. Push to `main`: CI tests, packages, deploys staging, runs smoke tests, then waits for approval before production.

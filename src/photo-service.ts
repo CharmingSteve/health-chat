@@ -1,6 +1,6 @@
 import { S3Client } from "@aws-sdk/client-s3";
 import { comparePhotos, type PhotoForModel } from "./compare.js";
-import { analysisKey, listPhotos, newPhotoId, originalKey, PHOTO_MAX_BYTES, readBytes, savePhotoMeta, todayIn, uploadForm, validateDateTaken, validateMeta, OWNER_TIMEZONE, type PhotoMeta } from "./photos.js";
+import { analysisKey, isOriginalType, listPhotos, newPhotoId, originalKey, PHOTO_MAX_BYTES, readBytes, savePhotoMeta, todayIn, uploadForm, validateDateTaken, validateMeta, OWNER_TIMEZONE, type PhotoMeta } from "./photos.js";
 
 export interface PhotoService {
   list(): Promise<PhotoMeta[]>;
@@ -18,7 +18,7 @@ export function photoService(opts: { s3: S3Client; photosBucket: string; modelId
     },
     async uploadForms(input) {
       const date = input.date_taken === undefined || input.date_taken === "" ? todayIn(OWNER_TIMEZONE, now()) : validateDateTaken(input.date_taken, now());
-      if (input.original_type !== "image/jpeg" && input.original_type !== "image/png") throw new Error("Only jpg and png originals are accepted");
+      if (typeof input.original_type !== "string" || !isOriginalType(input.original_type)) throw new Error("Only jpg, png, and HEIC originals are accepted");
       const id = newPhotoId();
       const original = await uploadForm(opts.s3, opts.photosBucket, originalKey(date, id, input.original_type), input.original_type);
       const analysis = await uploadForm(opts.s3, opts.photosBucket, analysisKey(date, id), "image/jpeg");
