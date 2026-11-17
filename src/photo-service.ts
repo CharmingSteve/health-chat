@@ -1,6 +1,20 @@
 import { S3Client } from "@aws-sdk/client-s3";
 import { comparePhotos, type PhotoForModel } from "./compare.js";
+import { MAX_IMAGES_PER_ANSWER, type PhotoAccess } from "./chat.js";
 import { analysisKey, analysisKeyFor, isOriginalType, listPhotos, newPhotoId, originalKey, PHOTO_MAX_BYTES, readBytes, savePhotoMeta, todayIn, uploadForm, validateDateTaken, validateMeta, OWNER_TIMEZONE, type PhotoMeta } from "./photos.js";
+
+/**
+ * Comparisons are paused because model descriptions did not match the photos.
+ * Turn back on only after that is fixed and checked.
+ */
+export const PHOTO_COMPARE_ENABLED = false;
+
+export class PhotoComparePausedError extends Error {
+  constructor() {
+    super("Photo comparison is paused while its answers are being checked");
+    this.name = "PhotoComparePausedError";
+  }
+}
 
 export interface PhotoService {
   list(): Promise<PhotoMeta[]>;
@@ -41,6 +55,7 @@ export function photoService(opts: { s3: S3Client; photosBucket: string; modelId
       return readBytes(opts.s3, opts.photosBucket, key);
     },
     async compare(input) {
+      if (!PHOTO_COMPARE_ENABLED) throw new PhotoComparePausedError();
       if (!Array.isArray(input.ids) || input.ids.some((i) => typeof i !== "string")) throw new Error("ids must be a list of photo ids");
       const all = await listPhotos(opts.s3, opts.photosBucket);
       const chosen = all.filter((m) => (input.ids as string[]).includes(m.id));
@@ -52,6 +67,29 @@ export function photoService(opts: { s3: S3Client; photosBucket: string; modelId
       }
       // Measured weights from stuntman-diet are added here once the readings are imported.
       return comparePhotos(photos, typeof input.question === "string" ? input.question : "", "", opts.modelId);
+    },
+  };
+}
+
+/** Photos for the chat: list them, and load chosen ones as small analysis copies (no location in the image). */
+export function chatPhotoAccess(s3: S3Client, bucket: string): PhotoAccess {
+  return {
+    async list() {
+      return (await listPhotos(s3, bucket)).map((m) => ({
+        id: m.id,
+        date_taken: m.date_taken,
+        setting: m.setting,
+        place: m.location ? `${m.location.lat.toFixed(3)}, ${m.location.lon.toFixed(3)}` : null,
+      }));
+    },
+    async load(ids) {
+      const all = await listPhotos(s3, bucket);
+      const chosen = all.filter((m) => ids.includes(m.id)).slice(0, MAX_IMAGES_PER_ANSWER);
+      const loaded = [];
+      for (const m of chosen) {
+        loaded.push({ id: m.id, date_taken: m.date_taken, image: { format: "jpeg" as const, bytes: await readBytes(s3, bucket, m.analysis_key) } });
+      }
+      return loaded;
     },
   };
 }

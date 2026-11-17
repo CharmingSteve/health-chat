@@ -273,6 +273,31 @@ async function loadChatList() {
   }
 }
 
+// Photos attached to a question: the same small copy the photo list uses (re-encoded, no location).
+let askAttachments = [];
+
+async function blobToBase64(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
+async function setAskAttachments(files) {
+  const status = $("#ask-attachments");
+  askAttachments = [];
+  for (const file of Array.from(files).slice(0, 4)) {
+    try {
+      const copy = await makeAnalysisCopy(file, inferType(file.name, file.type) || file.type);
+      if (copy.size > 600 * 1024) throw new Error("too large after resizing");
+      askAttachments.push({ format: "jpeg", data_base64: await blobToBase64(copy) });
+    } catch (error) {
+      status.textContent = `${file.name}: could not be read (${error.message}).`;
+    }
+  }
+  if (askAttachments.length) status.textContent = `${askAttachments.length} photo(s) attached.`;
+}
+
 async function askQuestion(event) {
   event.preventDefault();
   const question = $("#question").value.trim();
@@ -288,12 +313,15 @@ async function askQuestion(event) {
     const response = await api("/api/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, conversation_id: conversation.id, subject: conversation.subject }),
+      body: JSON.stringify({ question, conversation_id: conversation.id, subject: conversation.subject, attachments: askAttachments }),
     });
     const body = await response.json();
     if (!response.ok) {
       $("#answer").textContent = body.error || `Request failed (${response.status}).`;
     } else {
+      askAttachments = [];
+      $("#ask-attachments").textContent = "";
+      $("#ask-images").value = "";
       $("#answer").textContent = body.answer;
       renderQueries(body.queries || []);
       $("#thread").append(renderTurn({ question, answer: body.answer, queries: body.queries || [] }));
@@ -634,6 +662,7 @@ function setupPhotoDrop() {
   for (const type of ["dragleave", "drop"]) zone.addEventListener(type, () => zone.classList.remove("over"));
   zone.addEventListener("drop", (e) => { e.preventDefault(); addFiles(e.dataTransfer.files); });
   $("#photo-upload").addEventListener("click", uploadAll);
+  $("#ask-images").addEventListener("change", (e) => setAskAttachments(e.target.files));
 }
 
 async function thumbUrl(id) {
