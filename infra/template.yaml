@@ -33,6 +33,10 @@ Parameters:
   LogsBucket:
     Type: String
     Description: Chat history bucket (chats/ and activity/). Created by scripts/ensure-bucket.mjs.
+  DietJobName:
+    Type: String
+    Default: health-chat-diet-job
+    Description: Name of the weekly diet import Lambda (infra/diet-job.yaml, stack of the same name). Production only.
 Conditions:
   DataOn: !Equals [!Ref DataEnabled, "true"]
 Resources:
@@ -114,6 +118,13 @@ Resources:
           - Effect: Allow
             Action: [s3:ListBucket]
             Resource: !Sub arn:${AWS::Partition}:s3:::${LogsBucket}
+          # Diet import status (read) and the "refresh now" trigger (invoke, asynchronously). Nothing else.
+          - Effect: Allow
+            Action: [s3:GetObject]
+            Resource: !Sub arn:${AWS::Partition}:s3:::${TablesBucket}/ledger/diet*
+          - Effect: Allow
+            Action: [lambda:InvokeFunction]
+            Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${DietJobName}
   WebFunction:
     Type: AWS::Lambda::WebFunction
     Properties:
@@ -147,6 +158,8 @@ Resources:
           SMOKE_CLIENT_ID: !Ref SmokeClientId
           DATA_ENABLED: !Ref DataEnabled
           LOGS_BUCKET: !Ref LogsBucket
+          TABLES_BUCKET: !Ref TablesBucket
+          DIET_JOB_NAME: !Ref DietJobName
           ATHENA_WORKGROUP: health-chat-data
           GLUE_DATABASE: health_chat
       BuildConfig:

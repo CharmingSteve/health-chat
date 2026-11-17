@@ -19,6 +19,8 @@ export interface AppDeps {
   ask?: (question: string, context: string) => Promise<ChatAnswer>;
   /** Chat history in S3 (production only). Absent where history is not enabled. */
   history?: { s3: S3Like; bucket: string; now: () => Date; model: string; retryDelays?: number[] };
+  /** Diet import status (the last successful run and the last attempt), and the refresh trigger. Production only. */
+  diet?: { readStatus: () => Promise<unknown>; startRefresh: () => Promise<void> };
   /** Public browser config. Client ids and the hosted-UI domain are not secrets. */
   browserConfig: { domain: string; clientId: string };
   publicDir: string;
@@ -173,6 +175,25 @@ export function createApp(deps: AppDeps): Hono<Env> {
     if (!turn) return c.json({ error: "Not a valid turn record" }, 400);
     const save = await saveTurn(deps.history.s3, deps.history.bucket, turn, deps.history.retryDelays);
     return c.json(save, save.saved ? 200 : 503);
+  });
+
+  app.get("/api/diet/status", async (c) => {
+    if (!deps.diet) return c.json({ error: "Diet import is not enabled in this environment" }, 503);
+    try {
+      return c.json(await deps.diet.readStatus());
+    } catch {
+      return c.json({ error: "Status could not be read. Try again." }, 503);
+    }
+  });
+
+  app.post("/api/diet/refresh", async (c) => {
+    if (!deps.diet) return c.json({ error: "Diet import is not enabled in this environment" }, 503);
+    try {
+      await deps.diet.startRefresh();
+      return c.json({ started: true }, 202);
+    } catch {
+      return c.json({ error: "The refresh could not be started. Try again." }, 503);
+    }
   });
 
   app.get("/api/history", async (c) => {

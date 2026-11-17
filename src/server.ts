@@ -6,7 +6,8 @@ import { createApp } from "./app.js";
 import { answerQuestion } from "./chat.js";
 import { athenaRunner } from "./query.js";
 import { createChatModel } from "./bedrock.js";
-import { S3Client } from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 
 // Web Functions give the server its host and port in AWS_LAMBDA_HTTP_ENDPOINT (host:port).
 // Locally the fallback is used.
@@ -39,6 +40,31 @@ const ask = dataEnabled
       }, context)
   : undefined;
 
+// Diet import status and refresh (production only). The job itself runs in its own Lambda.
+const tablesBucket = process.env.TABLES_BUCKET;
+const dietJob = process.env.DIET_JOB_NAME;
+const diet = dataEnabled && tablesBucket && dietJob
+  ? {
+      readStatus: async () => {
+        const s3 = new S3Client({});
+        const read = async (key: string) => {
+          try {
+            const r = await s3.send(new GetObjectCommand({ Bucket: tablesBucket, Key: key }));
+            return JSON.parse(await r.Body!.transformToString("utf8")) as unknown;
+          } catch (error) {
+            if (error instanceof Error && error.name === "NoSuchKey") return null;
+            throw error;
+          }
+        };
+        return { last_success: await read("ledger/diet.json"), last_attempt: await read("ledger/diet-status.json") };
+      },
+      startRefresh: async () => {
+        const lambda = new LambdaClient({});
+        await lambda.send(new InvokeCommand({ FunctionName: dietJob, InvocationType: "Event", Payload: Buffer.from(JSON.stringify({ trigger: "manual" })) }));
+      },
+    }
+  : undefined;
+
 // Chat history is written straight to S3, in the same environments that can read data.
 const logsBucket = process.env.LOGS_BUCKET;
 const history = dataEnabled && logsBucket
@@ -52,6 +78,7 @@ const app = createApp({
   converse: createConverse(modelId),
   ...(ask ? { ask } : {}),
   ...(history ? { history } : {}),
+  ...(diet ? { diet } : {}),
   browserConfig: { domain: cognitoDomain, clientId },
   publicDir: resolve(import.meta.dirname, "..", "public"),
 });
