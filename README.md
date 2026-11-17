@@ -42,6 +42,51 @@ To try a question from your machine, without the browser: `AWS_PROFILE=click AWS
 Retention rules on the tables bucket: old table versions are deleted after 30 days; Athena results after 7 days.
 Every bucket is private, versioned, encrypted with AWS-managed keys, and blocks public access.
 
+## Adding new data
+
+Run these from the repo root, with `export AWS_PROFILE=click AWS_REGION=us-east-1`. Each import reads the sources again and replaces the tables, so re-running is safe. Afterwards, check the ledger (below) and ask a test question.
+
+### Apple Health (new export)
+
+1. On the iPhone: Health, profile picture, Export All Health Data. Copy the export to your Mac.
+2. Rename the exported folder to `Month-DD-YYYY` (for example `November-30-2026`) and upload it to the apple-health bucket. It must keep the layout `export.xml`, `workout-routes/`, `electrocardiograms/`. Example:
+   `aws s3 cp November-30-2026/ s3://apple-health-570989156105-us-east-1-an/November-30-2026/ --recursive`
+3. Run `npm run ingest:apple`. It picks the newest dated folder, so the older exports are not read again.
+4. Check `ledger/apple.json` in the tables bucket: the `export_folder` should be the new one, and `duplicates_removed` shows how many identical records were dropped.
+
+### Diet (daily entries from stuntman-diet)
+
+stuntman-diet exports a snapshot every night at 03:00 Asia/Jerusalem to its puddle bucket. That bucket keeps the exports for 90 days and the results for 7 days, so copy them to the diet bucket first:
+
+```bash
+aws s3 sync s3://stuntman-diet-production-puddlebucket-xaioorfosdus/exports/ s3://health-chat-diet-570989156105-us-east-1-an/stuntman-production/exports/ --sse AES256
+aws s3 sync s3://stuntman-diet-production-puddlebucket-xaioorfosdus/results/ s3://health-chat-diet-570989156105-us-east-1-an/stuntman-production/results/ --sse AES256
+```
+
+Then run `npm run ingest:diet`. It uses the newest snapshot by its manifest time. Named exclusions are in `src/ingest/diet.ts` (`DIET_EXCLUSIONS`); each one is counted in `ledger/diet.json`.
+
+The legacy master CSV is read from `legacy-master/` in the diet bucket. It is not updated from now on; new days come from stuntman-diet.
+
+### Medical (lab exports and PDFs)
+
+- **Clalit lab exports:** upload each new `PersonList (n).csv` into `blood-tests/<year>/` in the medical bucket. The import reads only files with that name pattern in that folder.
+- **Other PDFs** (hospital letters, referrals, results): upload to one of the allowlisted folders: `blood-tests/`, `broken-shoulder/`, `cardiology/`, `foot-x-ray/`, `hernia/`, `tests/`, or the physiotherapy folder. Files at the top level of the bucket are also read.
+- **Images and DICOM files:** upload to an allowlisted folder. They are indexed by name, size, and date only.
+- Run `npm run ingest:medical`.
+- A new folder is not read until it is added to `ALLOWED_FOLDERS` in `src/ingest/medical-classify.ts`. That is a code change, so make it through a PR.
+- Lab names not in `NAME_MAP` (`src/ingest/labs.ts`) are kept under their raw names and listed in `ledger/medical.json` under `unknown_lab_names`. Add a mapping, and add a test for it.
+
+### Check the result
+
+- Ledgers in `s3://health-chat-tables-570989156105-us-east-1-an/ledger/` (`apple.json`, `diet.json`, `medical.json`) list the source files read, the row counts, and what was skipped and why.
+- In the browser, ask a question such as "how many diet entries are there for each source?" The answer shows the SQL, so you can see what was read.
+
+### Things to avoid
+
+- Do not upload anything into the tables bucket by hand. Tables are written only by the import scripts.
+- Do not change a source file after upload to fix a value. Fix it in the source (re-export or re-scan), then re-run the import.
+- If an import stops with an error, some tables may already have been rebuilt and others not. Fix the cause in the source, then re-run the same import; it rebuilds every table from the sources.
+
 ## Setup and commands
 
 Requirements: Node.js 24, AWS CLI v2, the `click` profile.
