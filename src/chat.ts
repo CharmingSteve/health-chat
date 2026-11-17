@@ -1,6 +1,8 @@
+import type { ContentBlock, Message, ToolConfiguration, ToolUseBlock } from "@aws-sdk/client-bedrock-runtime";
 import { TABLES } from "./ingest/schemas.js";
 import { NAME_MAP } from "./ingest/labs.js";
 import type { QueryResult } from "./query.js";
+import { MAX_COMPARE_PHOTOS } from "./compare.js";
 
 // The chat loop: the model may call query_data (SQL, checked in query.ts) up to MAX_ROUNDS times,
 // then answers from the results. The model never sees the database directly.
@@ -28,6 +30,7 @@ export function systemPrompt(): string {
     "14. Forecasts: never predict a future lab value, a score, or an outcome. Describe the past values, their dates, the reference range, and when the next test is due, and suggest asking the doctor. An A1C reflects roughly the last 2 to 3 months, so a single week of diet entries cannot change the next value in a way that can be predicted from these tables.",
     "17. Completeness: complete means the whole day's intake is known, and net calories are reliable (net_reliable=true). partial means the intake is not a whole-day total: do not give a net for it, and say it is partial. missing means nothing was logged: never treat it as zero.  Leave partial and missing days out of totals and averages unless the owner asks, and say how many were left out.",
     "22. Photos: use list_photos to find them and show_photos to see them (up to 4 at a time). Describe only what is visible, photo by photo, with the date and setting given in the record. Do not guess what a photo shows; if you cannot see it clearly, say so. Body estimates are visual estimates with a range and a confidence, never measurements. For injuries, describe what is visible; for severe signs, say to seek urgent care now.",
+    "23. Photos attached to the message are available to inspect now, including photos from an earlier comparison. Answer follow-up questions about them directly; do not ask the owner to upload them again. Use the photo tools only if you need other photos. Photo dates and labelled visual estimates come from the images and their metadata, not SQL; quantitative health records still require query results.",
     "21. The verified diet figures block in the message is computed by the database for this question. Quote its totals, counts, and averages exactly. Do not recompute them; if you need a figure it does not contain, query it.",
     "16b. Compute every total, average, and count with SQL (SUM, AVG, COUNT), never by adding numbers in your head. Quote the figure from the query result.",
     "16a. Net for a day = intake minus burn. Intake is the sum of diet_entries.calories for that day (skip superseded rows). Burn is burn_effective from diet_days. Compute both in one query, for example: SELECT d.day, d.completeness, SUM(e.calories) - d.burn_effective AS net FROM diet_days d JOIN diet_entries e ON e.day = d.day AND NOT e.superseded GROUP BY d.day, d.completeness, d.burn_effective. Never report the intake alone as net.",
@@ -46,13 +49,13 @@ export function systemPrompt(): string {
   ].join("\n");
 }
 
-export interface ModelToolUse { toolUseId: string; name: string; input: { sql?: unknown; ids?: unknown } }
+export interface ModelToolUse { toolUseId: string; name: string; input: { [key: string]: NonNullable<ToolUseBlock["input"]> | null } }
 export type ModelTurn =
   | { kind: "text"; text: string }
   | { kind: "tool_use"; text: string; toolUses: ModelToolUse[] };
 
 /** One model call. messages and the reply use the Converse message shape. */
-export type CallModel = (messages: unknown[]) => Promise<ModelTurn>;
+export type CallModel = (messages: Message[]) => Promise<ModelTurn>;
 
 export interface ImageInput {
   format: "jpeg" | "png";
@@ -63,7 +66,7 @@ export interface ImageInput {
 /** Photos the chat can list and view. Viewing loads the small analysis copy (no location). */
 export interface PhotoAccess {
   list: () => Promise<{ id: string; date_taken: string; setting: string | null; place: string | null }[]>;
-  load: (ids: string[]) => Promise<{ id: string; date_taken: string; image: ImageInput }[]>;
+  load: (ids: string[]) => Promise<{ id: string; date_taken: string; setting?: string | null; image: ImageInput }[]>;
 }
 
 export const MAX_IMAGES_PER_ANSWER = 4;
@@ -81,16 +84,28 @@ export interface ChatAnswer {
   rounds: number;
 }
 
-export async function answerQuestion(question: string, deps: ChatDeps, context = "", attached: ImageInput[] = []): Promise<ChatAnswer> {
-  const text = context ? `${context}\n\nCurrent question: ${question}` : question;
+export async function answerQuestion(question: string, deps: ChatDeps, context = "", attached: ImageInput[] = [], photoIds: string[] = []): Promise<ChatAnswer> {
   if (attached.length > MAX_IMAGES_PER_ANSWER) throw new Error(`Attach at most ${MAX_IMAGES_PER_ANSWER} images`);
   const attachedBlocks = attached.map((img) => ({ image: { format: img.format, source: { bytes: img.bytes } } }));
-  const messages: unknown[] = [{ role: "user", content: [...attachedBlocks, { text }] }];
+  const shown = new Map<string, LoadedPhoto>();
+  if (photoIds.length) {
+    if (photoIds.length > MAX_COMPARE_PHOTOS) throw new Error(`Choose at most ${MAX_COMPARE_PHOTOS} photos`);
+    if (!deps.photos) throw new Error("Photos are not available here");
+    for (const photo of await deps.photos.load(photoIds)) shown.set(photo.id, photo);
+  }
+  const firstMessage: Message = { role: "user", content: [] };
+  const updateImages = () => {
+    const photos = [...shown.values()];
+    const labels = photos.length ? `Photos attached above (after any newly attached images), in order:\n${photos.map((photo, i) => `Image ${attached.length + i + 1}: photo id ${photo.id}, taken ${photo.date_taken}${photo.setting ? `, setting: ${photo.setting}` : ""}`).join("\n")}` : "";
+    const text = [context, labels, context || labels ? `Current question: ${question}` : question].filter(Boolean).join("\n\n");
+    firstMessage.content = [...attachedBlocks, ...photos.map((photo) => ({ image: { format: photo.image.format, source: { bytes: photo.image.bytes } } })), { text }];
+  };
+  updateImages();
+  const messages: Message[] = [firstMessage];
   const queries: ChatAnswer["queries"] = [];
-  const photosShown: string[] = [];
   for (let round = 1; round <= MAX_ROUNDS; round += 1) {
     const turn = await deps.callModel(messages);
-    if (turn.kind === "text") return { answer: turn.text, queries, rounds: round, ...(photosShown.length ? { photos_shown: [...new Set(photosShown)] } : {}) };
+    if (turn.kind === "text") return { answer: turn.text, queries, rounds: round, ...(shown.size ? { photos_shown: [...shown.keys()] } : {}) };
     messages.push({
       role: "assistant",
       content: [
@@ -98,13 +113,14 @@ export async function answerQuestion(question: string, deps: ChatDeps, context =
         ...turn.toolUses.map((t) => ({ toolUse: { toolUseId: t.toolUseId, name: t.name, input: t.input } })),
       ],
     });
-    const results = [];
+    const results: ContentBlock[] = [];
     for (const use of turn.toolUses) {
       const sql = typeof use.input.sql === "string" ? use.input.sql : "";
       if (use.name === "list_photos" || use.name === "show_photos") {
-        const shown = await photoToolResult(use, deps);
-        results.push(shown.result);
-        photosShown.push(...shown.ids);
+        const output = await photoToolResult(use, deps, [...shown.keys()]);
+        results.push(output.result);
+        for (const photo of output.photos) shown.set(photo.id, photo);
+        updateImages();
         continue;
       }
       const result = use.name === "query_data" && sql ? await deps.runQuery(sql) : failedResult("Unknown tool or missing sql");
@@ -112,7 +128,7 @@ export async function answerQuestion(question: string, deps: ChatDeps, context =
       results.push({
         toolResult: {
           toolUseId: use.toolUseId,
-          content: [{ json: result.ok ? { columns: result.columns, rows: result.rows, row_count: result.row_count, truncated: result.truncated } : { error: result.error } }],
+          content: [{ json: result.ok ? { columns: result.columns, rows: result.rows, row_count: result.row_count, truncated: result.truncated } : { error: result.error ?? "Query failed" } }],
           status: result.ok ? "success" : "error",
         },
       });
@@ -123,6 +139,7 @@ export async function answerQuestion(question: string, deps: ChatDeps, context =
     answer: "I could not finish answering within the query limit. Try a narrower question.",
     queries,
     rounds: MAX_ROUNDS,
+    ...(shown.size ? { photos_shown: [...shown.keys()] } : {}),
   };
 }
 
@@ -130,30 +147,34 @@ function failedResult(error: string): QueryResult {
   return { ok: false, columns: [], rows: [], row_count: 0, truncated: false, bytes_scanned: 0, sql_run: "", error };
 }
 
-async function photoToolResult(use: ModelToolUse, deps: ChatDeps): Promise<{ result: { toolResult: { toolUseId: string; content: unknown[]; status: string } }; ids: string[] }> {
-  const fail = (error: string) => ({ result: { toolResult: { toolUseId: use.toolUseId, content: [{ json: { error } }], status: "error" } }, ids: [] });
+type LoadedPhoto = Awaited<ReturnType<PhotoAccess["load"]>>[number];
+type PhotoToolOutput = { result: ContentBlock; photos: LoadedPhoto[] };
+
+async function photoToolResult(use: ModelToolUse, deps: ChatDeps, shownIds: string[]): Promise<PhotoToolOutput> {
+  const fail = (error: string): PhotoToolOutput => ({ result: { toolResult: { toolUseId: use.toolUseId, content: [{ json: { error } }], status: "error" } }, photos: [] });
   if (!deps.photos) return fail("Photos are not available here");
   if (use.name === "list_photos") {
-    return { result: { toolResult: { toolUseId: use.toolUseId, content: [{ json: { photos: await deps.photos.list() } }], status: "success" } }, ids: [] };
+    return { result: { toolResult: { toolUseId: use.toolUseId, content: [{ json: { photos: await deps.photos.list() } }], status: "success" } }, photos: [] };
   }
   const ids = Array.isArray(use.input.ids) ? use.input.ids.filter((i): i is string => typeof i === "string") : [];
   if (ids.length === 0 || ids.length > MAX_IMAGES_PER_ANSWER) return fail(`Choose 1 to ${MAX_IMAGES_PER_ANSWER} photo ids`);
+  if (new Set([...shownIds, ...ids]).size > MAX_COMPARE_PHOTOS) return fail(`Choose at most ${MAX_COMPARE_PHOTOS} photos per answer`);
   const loaded = await deps.photos.load(ids);
-  const meta = loaded.map((p) => ({ id: p.id, date_taken: p.date_taken }));
-  // The images travel with the tool result, so the model sees them in this turn.
+  const meta = loaded.map((p) => ({ id: p.id, date_taken: p.date_taken, setting: p.setting ?? null }));
+  // Nova accepts images in user messages, not nested inside tool results.
   return {
     result: {
       toolResult: {
         toolUseId: use.toolUseId,
-        content: [{ json: { shown: meta } }, ...loaded.map((p) => ({ image: { format: p.image.format, source: { bytes: p.image.bytes } } }))],
+        content: [{ json: { shown: meta, image_location: "The images are attached before the text in the first user message, in the labelled order." } }],
         status: "success",
       },
     },
-    ids: loaded.map((p) => p.id),
+    photos: loaded,
   };
 }
 
-export const QUERY_TOOL = {
+export const QUERY_TOOL: ToolConfiguration = {
   tools: [
     {
       toolSpec: {

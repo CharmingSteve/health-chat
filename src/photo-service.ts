@@ -1,6 +1,6 @@
 import { S3Client } from "@aws-sdk/client-s3";
 import { comparePhotos, MAX_COMPARE_PHOTOS, type PhotoForModel } from "./compare.js";
-import { MAX_IMAGES_PER_ANSWER, type PhotoAccess } from "./chat.js";
+import type { PhotoAccess } from "./chat.js";
 import { analysisKey, analysisKeyFor, isOriginalType, isValidPhotoId, listPhotos, newPhotoId, originalKey, PHOTO_MAX_BYTES, readBytes, savePhotoMeta, todayIn, uploadForm, validateDateTaken, validateMeta, OWNER_TIMEZONE, type PhotoMeta } from "./photos.js";
 
 export const PHOTO_COMPARE_ENABLED = true;
@@ -83,11 +83,13 @@ export function chatPhotoAccess(s3: S3Client, bucket: string): PhotoAccess {
       }));
     },
     async load(ids) {
+      if (ids.length === 0 || ids.length > MAX_COMPARE_PHOTOS || ids.some((id) => !isValidPhotoId(id)) || new Set(ids).size !== ids.length) throw new Error(`Choose 1 to ${MAX_COMPARE_PHOTOS} distinct photo ids`);
       const all = await listPhotos(s3, bucket);
-      const chosen = all.filter((m) => ids.includes(m.id)).slice(0, MAX_IMAGES_PER_ANSWER);
+      const chosen = all.filter((m) => ids.includes(m.id));
+      if (chosen.length !== ids.length) throw new Error("Some photos were not found");
       const loaded = [];
       for (const m of chosen) {
-        loaded.push({ id: m.id, date_taken: m.date_taken, image: { format: "jpeg" as const, bytes: await readBytes(s3, bucket, m.analysis_key) } });
+        loaded.push({ id: m.id, date_taken: m.date_taken, setting: m.setting, image: { format: "jpeg" as const, bytes: await readBytes(s3, bucket, m.analysis_key) } });
       }
       return loaded;
     },

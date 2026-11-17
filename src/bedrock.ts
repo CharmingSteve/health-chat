@@ -1,4 +1,4 @@
-import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
+import { BedrockRuntimeClient, ConverseCommand, type Message } from "@aws-sdk/client-bedrock-runtime";
 
 // One Bedrock call path for the whole app. The model comes only from BEDROCK_MODEL,
 // which CloudFormation sets from the BedrockModel parameter (one place to change it).
@@ -33,13 +33,13 @@ import { systemPrompt, QUERY_TOOL, type CallModel, type ModelTurn } from "./chat
 
 /** Calls the configured model with the system prompt and the query tool, and maps the reply to a ModelTurn. */
 export function createChatModel(modelId: string, client = new BedrockRuntimeClient({})): CallModel {
-  return async (messages: unknown[]): Promise<ModelTurn> => {
+  return async (messages: Message[]): Promise<ModelTurn> => {
     const response = await client.send(
       new ConverseCommand({
         modelId,
         system: [{ text: systemPrompt() }],
-        messages: messages as never,
-        toolConfig: QUERY_TOOL as never,
+        messages,
+        toolConfig: QUERY_TOOL,
         inferenceConfig: { maxTokens: 1200, temperature: 0 },
       }),
     );
@@ -48,7 +48,7 @@ export function createChatModel(modelId: string, client = new BedrockRuntimeClie
     const toolUses = blocks
       .map((b) => ("toolUse" in b ? b.toolUse : undefined))
       .filter((t): t is NonNullable<typeof t> => t !== undefined)
-      .map((t) => ({ toolUseId: t.toolUseId ?? "", name: t.name ?? "", input: (t.input ?? {}) as { sql?: unknown } }));
+      .map((t) => ({ toolUseId: t.toolUseId ?? "", name: t.name ?? "", input: typeof t.input === "object" && t.input !== null && !Array.isArray(t.input) ? t.input : {} }));
     if (response.stopReason === "tool_use" && toolUses.length > 0) return { kind: "tool_use", text, toolUses };
     if (!text) throw new Error("Model returned no text");
     return { kind: "text", text };

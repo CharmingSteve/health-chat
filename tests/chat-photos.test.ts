@@ -53,17 +53,34 @@ describe("photo tools", () => {
     expect(out.answer).toBe("You have one photo.");
   });
 
-  it("show_photos loads the chosen photos into the tool result as images, and records their ids", async () => {
+  it("show_photos puts images before the initial text, keeps tool results JSON-only for Nova, and records their ids", async () => {
     const callModel = scripted([
       { kind: "tool_use", text: "", toolUses: [{ toolUseId: "t2", name: "show_photos", input: { ids: ["p1-aaaaaaaa"] } }] },
       { kind: "text", text: "The photo is from 2026-11-07." },
     ]);
     const out = await answerQuestion("look at it", { callModel, runQuery: noQuery, photos });
     expect(photos.load).toHaveBeenCalledWith(["p1-aaaaaaaa"]);
-    const second = callModel.mock.calls[1]?.[0] as { content: { toolResult?: { content: Record<string, unknown>[] } }[] }[];
+    const second = callModel.mock.calls[1]?.[0] as { content: { image?: unknown; text?: string; toolResult?: { content: Record<string, unknown>[] } }[] }[];
     const content = second[second.length - 1]?.content[0]?.toolResult?.content ?? [];
-    expect(content.some((c) => "image" in c)).toBe(true);
+    expect(content.some((c) => "image" in c)).toBe(false);
+    expect(content[0]).toMatchObject({ json: { shown: [{ id: "p1-aaaaaaaa", date_taken: "2026-11-07" }] } });
+    expect(second[0]?.content[0]?.image).toMatchObject({ format: "jpeg" });
+    expect(second[0]?.content[1]?.text).toContain("photo id p1-aaaaaaaa, taken 2026-11-07");
     expect(out.photos_shown).toEqual(["p1-aaaaaaaa"]);
+  });
+
+  it("reloads comparison photos before the first model call, including all eight, without asking the model to find them", async () => {
+    const ids = Array.from({ length: 8 }, (_, i) => `photoid${i}`);
+    const callModel = scripted([{ kind: "text", text: "The same photos are available." }]);
+    const out = await answerQuestion("what changed?", { callModel, runQuery: noQuery, photos }, "earlier comparison", [], ids);
+    expect(photos.load).toHaveBeenCalledWith(ids);
+    const messages = callModel.mock.calls[0]?.[0] as { content: Record<string, unknown>[] }[];
+    expect(messages[0]?.content).toHaveLength(9);
+    expect(messages[0]?.content.slice(0, 8).every((block) => "image" in block)).toBe(true);
+    expect(messages[0]?.content[8]?.text).toContain("earlier comparison");
+    expect(messages[0]?.content[8]?.text).toContain("photo id photoid7");
+    expect(out.photos_shown).toEqual(ids);
+    expect(callModel).toHaveBeenCalledTimes(1);
   });
 
   it("show_photos refuses more than four ids without loading anything", async () => {

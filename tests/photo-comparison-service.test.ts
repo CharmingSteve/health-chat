@@ -3,7 +3,7 @@ import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-r
 import { S3Client } from "@aws-sdk/client-s3";
 import { resolve } from "node:path";
 import { createApp } from "../src/app.js";
-import { photoService } from "../src/photo-service.js";
+import { chatPhotoAccess, photoService } from "../src/photo-service.js";
 import { listPhotos, readBytes, validateMeta } from "../src/photos.js";
 
 vi.mock("../src/photos.js", async (importOriginal) => ({
@@ -92,5 +92,20 @@ describe("selected uploaded photo comparison", () => {
     await expect(service.compare({ ids: ["aaaaaaaa", "dddddddd"] })).rejects.toThrow("not found");
     expect(readBytes).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("reloads all eight comparison images for chat, with settings, rather than silently truncating to four", async () => {
+    setup();
+    const records = Array.from({ length: 8 }, (_, i) => record(`photoid${i}`, `2026-01-0${i + 1}`));
+    vi.mocked(listPhotos).mockResolvedValue(records);
+    vi.mocked(readBytes).mockResolvedValue(new Uint8Array([1, 2, 3]));
+    const access = chatPhotoAccess(new S3Client({ region: "us-east-1" }), "photos-test");
+    const loaded = await access.load(records.map((photo) => photo.id));
+    expect(loaded).toHaveLength(8);
+    expect(loaded[7]).toMatchObject({ id: "photoid7", date_taken: "2026-01-08", setting: "Example studio" });
+    expect(readBytes).toHaveBeenCalledTimes(8);
+    vi.mocked(readBytes).mockClear();
+    await expect(access.load(["photoid0", "missing-photo"])).rejects.toThrow("not found");
+    expect(readBytes).not.toHaveBeenCalled();
   });
 });
