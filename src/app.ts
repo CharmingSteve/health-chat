@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono, type Context, type Next } from "hono";
 import { errors, type JWTPayload } from "jose";
@@ -36,6 +36,11 @@ const STATIC: Record<string, { file: string; type: string }> = {
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
   "/styles.css": { file: "styles.css", type: "text/css; charset=utf-8" },
 };
+// Browser libraries copied by scripts/vendor-browser-libs.mjs. libheif.mjs embeds its wasm, so no .wasm file is needed.
+const VENDOR: Record<string, { file: string; type: string }> = {
+  "/vendor/exifr.mjs": { file: "vendor/exifr.mjs", type: "text/javascript; charset=utf-8" },
+  "/vendor/libheif.mjs": { file: "vendor/libheif.mjs", type: "text/javascript; charset=utf-8" },
+};
 
 export function createApp(deps: AppDeps): Hono<Env> {
   const app = new Hono<Env>();
@@ -58,6 +63,22 @@ export function createApp(deps: AppDeps): Hono<Env> {
   for (const route of Object.keys(STATIC)) {
     app.get(route, (c) => {
       const asset = assets.get(route);
+      if (!asset) return c.notFound();
+      return c.body(asset.body, 200, { "Content-Type": asset.type });
+    });
+  }
+
+  // Vendor files are optional locally: a missing one returns 404 and does not stop the app from starting.
+  const vendor = new Map<string, { body: ArrayBuffer; type: string }>();
+  for (const [route, { file, type }] of Object.entries(VENDOR)) {
+    const path = resolve(deps.publicDir, file);
+    if (!existsSync(path)) continue;
+    const bytes = readFileSync(path);
+    vendor.set(route, { body: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, type });
+  }
+  for (const route of Object.keys(VENDOR)) {
+    app.get(route, (c) => {
+      const asset = vendor.get(route);
       if (!asset) return c.notFound();
       return c.body(asset.body, 200, { "Content-Type": asset.type });
     });
