@@ -642,8 +642,39 @@ async function thumbUrl(id) {
   return URL.createObjectURL(await response.blob());
 }
 
+// Thumbnails are fetched only when their card scrolls into view, and the list is loaded only when the section is open.
+// Each thumbnail is a separate request, so a long library costs nothing until it is looked at.
+const photoUrls = [];
+const thumbObserver = "IntersectionObserver" in window
+  ? new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      thumbObserver.unobserve(entry.target);
+      loadThumb(entry.target);
+    }
+  }, { rootMargin: "200px" })
+  : null;
+
+async function loadThumb(img) {
+  try {
+    img.src = await thumbUrl(img.dataset.id);
+    photoUrls.push(img.src);
+  } catch {
+    img.alt = "no preview";
+  }
+}
+
+let photosStale = true;
+
 async function loadPhotos() {
+  if (!$("#photos-open").open) {
+    photosStale = true;
+    return;
+  }
+  photosStale = false;
   const list = $("#photo-list");
+  thumbObserver?.disconnect();
+  for (const url of photoUrls.splice(0)) URL.revokeObjectURL(url);
   try {
     const response = await api("/api/photos");
     if (!response.ok) {
@@ -655,7 +686,7 @@ async function loadPhotos() {
       list.replaceChildren(Object.assign(document.createElement("div"), { className: "muted", textContent: "No photos yet." }));
       return;
     }
-    list.replaceChildren(...await Promise.all(photos.map(async (p) => {
+    list.replaceChildren(...photos.map((p) => {
       const card = document.createElement("label");
       card.className = "photo-card";
       const box = document.createElement("input");
@@ -665,22 +696,23 @@ async function loadPhotos() {
       const img = document.createElement("img");
       img.alt = "";
       img.className = "thumb";
-      try {
-        img.src = await thumbUrl(p.id);
-      } catch {
-        img.alt = "no preview";
-      }
+      img.dataset.id = p.id;
+      if (thumbObserver) thumbObserver.observe(img);
+      else loadThumb(img);
       const caption = document.createElement("span");
       caption.className = "muted";
       const place = p.location ? ` · ${p.location.lat.toFixed(3)}, ${p.location.lon.toFixed(3)}` : "";
       caption.textContent = `${p.date_taken}${place}${p.setting ? ` · ${p.setting}` : ""}`;
       card.append(box, img, caption);
       return card;
-    })));
+    }));
   } catch {
     list.replaceChildren(Object.assign(document.createElement("div"), { className: "muted", textContent: "The photo list could not be loaded." }));
   }
 }
+$("#photos-open").addEventListener("toggle", () => {
+  if ($("#photos-open").open && photosStale) loadPhotos();
+});
 
 async function comparePhotos() {
   const ids = [...document.querySelectorAll(".photo-pick:checked")].map((b) => b.value);
@@ -693,13 +725,31 @@ async function comparePhotos() {
   }
   status.textContent = "Comparing…";
   try {
+    // The comparison is saved in the current chat, like any answer. A new chat starts if none is open.
+    if (!conversation.id) conversation = { id: newConversationId(), subject: "Photo comparison" };
     const response = await api("/api/photos/compare", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids }),
+      body: JSON.stringify({ ids, conversation_id: conversation.id, subject: conversation.subject }),
     });
     const body = await response.json();
-    result.textContent = response.ok ? body.answer : body.error || "The comparison failed.";
+    if (!response.ok) {
+      result.textContent = body.error || "The comparison failed.";
+    } else {
+      result.textContent = body.answer;
+      // The server starts a chat when none was open, and returns its id. Later questions continue that chat.
+      if (body.conversation_id) conversation = { id: body.conversation_id, subject: body.subject || conversation.subject };
+      $("#thread").append(renderTurn({ question: `Compare ${ids.length} photos`, answer: body.answer, queries: [] }));
+      $("#chat-title").textContent = conversation.subject || "Chat";
+      if (body.history_enabled && body.saved === false && body.turn) {
+        addPending(body.turn);
+        showBanner("The comparison is shown, but it is not saved yet. Retrying.");
+        resendTurn(body.turn, 20);
+      } else if (body.history_enabled) {
+        showBanner("");
+        loadChatList();
+      }
+    }
     status.textContent = "";
   } catch (error) {
     status.textContent = error.message;

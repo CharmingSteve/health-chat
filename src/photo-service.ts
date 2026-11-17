@@ -1,6 +1,6 @@
 import { S3Client } from "@aws-sdk/client-s3";
 import { comparePhotos, type PhotoForModel } from "./compare.js";
-import { analysisKey, isOriginalType, listPhotos, newPhotoId, originalKey, PHOTO_MAX_BYTES, readBytes, savePhotoMeta, todayIn, uploadForm, validateDateTaken, validateMeta, OWNER_TIMEZONE, type PhotoMeta } from "./photos.js";
+import { analysisKey, analysisKeyFor, isOriginalType, listPhotos, newPhotoId, originalKey, PHOTO_MAX_BYTES, readBytes, savePhotoMeta, todayIn, uploadForm, validateDateTaken, validateMeta, OWNER_TIMEZONE, type PhotoMeta } from "./photos.js";
 
 export interface PhotoService {
   list(): Promise<PhotoMeta[]>;
@@ -36,9 +36,9 @@ export function photoService(opts: { s3: S3Client; photosBucket: string; modelId
       return meta;
     },
     async thumb(id) {
-      const found = (await listPhotos(opts.s3, opts.photosBucket)).find((m) => m.id === id);
-      if (!found) throw new Error("Photo not found");
-      return readBytes(opts.s3, opts.photosBucket, found.analysis_key);
+      const key = await analysisKeyFor(opts.s3, opts.photosBucket, id);
+      if (!key) throw new Error("Photo not found");
+      return readBytes(opts.s3, opts.photosBucket, key);
     },
     async compare(input) {
       if (!Array.isArray(input.ids) || input.ids.some((i) => typeof i !== "string")) throw new Error("ids must be a list of photo ids");
