@@ -3,8 +3,9 @@ import { serve } from "@hono/node-server";
 import { verifyCognitoToken } from "./auth.js";
 import { createConverse } from "./bedrock.js";
 import { createApp } from "./app.js";
-import { answerQuestion } from "./chat.js";
-import { athenaRunner } from "./query.js";
+import { makeAsk } from "./ask.js";
+import { ownerNotesBlock, readOwnerNotes } from "./owner-notes.js";
+import { photoService } from "./photo-service.js";
 import { createChatModel } from "./bedrock.js";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
@@ -33,11 +34,19 @@ const cognitoDomain = required("COGNITO_DOMAIN");
 const dataEnabled = process.env.DATA_ENABLED === "true";
 const modelId = required("BEDROCK_MODEL");
 const ask = dataEnabled
-  ? (question: string, context: string) =>
-      answerQuestion(question, {
-        callModel: createChatModel(modelId),
-        runQuery: athenaRunner({ workgroup: required("ATHENA_WORKGROUP"), database: required("GLUE_DATABASE") }),
-      }, context)
+  ? makeAsk({
+      modelId,
+      workgroup: required("ATHENA_WORKGROUP"),
+      database: required("GLUE_DATABASE"),
+      // The owner's stated pattern, if the owner has written one. Read on each question.
+      ownerNotes: async () => ownerNotesBlock(await readOwnerNotes(new S3Client({}), required("TABLES_BUCKET"))),
+    })
+  : undefined;
+
+// Progress photos (production only).
+const photosBucket = process.env.PHOTOS_BUCKET;
+const photos = dataEnabled && photosBucket
+  ? photoService({ s3: new S3Client({}), photosBucket, modelId })
   : undefined;
 
 // Diet import status and refresh (production only). The job itself runs in its own Lambda.
@@ -79,6 +88,7 @@ const app = createApp({
   ...(ask ? { ask } : {}),
   ...(history ? { history } : {}),
   ...(diet ? { diet } : {}),
+  ...(photos ? { photos } : {}),
   browserConfig: { domain: cognitoDomain, clientId },
   publicDir: resolve(import.meta.dirname, "..", "public"),
 });

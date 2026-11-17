@@ -26,6 +26,12 @@ const mutations = [
     from: "if (wait === undefined) break;", to: "break;" },
   { name: "drop the context size cap", file: "src/history.ts",
     from: "if (text.length > CONTEXT_MAX_CHARS) text = ", to: "if (false) text = " },
+  { name: "let a future photo date through", file: "src/photos.ts",
+    from: "if (value > todayIn(OWNER_TIMEZONE, now)) throw", to: "if (false) throw" },
+  { name: "drop the visual-estimate label from photo comparison", file: "src/compare.ts",
+    from: "Give visual estimates, and label every estimate 'visual estimate'.", to: "Give estimates." },
+  { name: "present the owner's stated pattern as measured", file: "src/owner-notes.ts",
+    from: "NOT measured, and never part", to: "measured, and never part" },
   { name: "loose model reply check", file: "src/bedrock.ts",
     from: 'return reply.trim() === "4";', to: 'return reply.includes("4");' },
 ];

@@ -42,6 +42,17 @@ To try a question from your machine, without the browser: `AWS_PROFILE=click AWS
 Retention rules on the tables bucket: old table versions are deleted after 30 days; Athena results after 7 days.
 Every bucket is private, versioned, encrypted with AWS-managed keys, and blocks public access.
 
+## Progress photos
+
+- Upload from the page. The date defaults to today; the calendar sets the date the photo was taken.
+- Each photo is stored in `health-chat-photos-570989156105-us-east-1-an`: the original as you took it (location and device details kept), and a smaller analysis copy made in the browser (re-encoded, so it carries no location). Nothing is deleted.
+- Compare two to eight photos from the page. They are compared in date order. The answer gives visual estimates, labelled as such, with a range and a confidence, and describes what it can see. Injuries: it describes swelling, redness, bruising, or bleeding. For severe signs it tells you to seek urgent care.
+- Estimates are not measurements. Measured weights and body-composition readings are the reference.
+
+## Owner's stated pattern
+
+An optional file, `notes/owner_patterns.json` in the tables bucket, holds your stated typical intake and burn (for example for Fridays). It is added to each question as your statement, not measured data, and it never enters totals or averages. The app can read it but not write it. Upload a new version to change it.
+
 ## Burn and net calories
 
 A day's burn is the recorded burn if one was written; otherwise the default of 2,000 kcal is assumed. stuntman-diet writes a burn only when it is above 2,000 (exercise), so a day without one is a default day. In `diet_days`, `burn_effective` is the burn used for net calories and `burn_basis` says whether it was `recorded` or `assumed_default`. Days with no food or burn entries are not tracked, and no burn is assumed for them. The chat labels assumed burns each time it uses them.

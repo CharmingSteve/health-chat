@@ -383,6 +383,129 @@ async function refreshDiet() {
   }
 }
 
+// ---- Progress photos ----------------------------------------------------------------------------
+// The browser makes a smaller analysis copy by drawing the photo onto a canvas. Drawing re-encodes the image,
+// which drops the metadata, so the model never receives the location. The original is uploaded separately.
+async function makeAnalysisCopy(file) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 1024 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not make the analysis copy"))), "image/jpeg", 0.85));
+}
+
+async function postForm(form, file, contentType) {
+  const data = new FormData();
+  for (const [k, v] of Object.entries(form.fields)) data.append(k, v);
+  data.append("file", file);
+  const response = await fetch(form.url, { method: "POST", body: data });
+  if (!response.ok) throw new Error(`Upload was refused (${response.status}).`);
+}
+
+async function uploadPhoto(event) {
+  event.preventDefault();
+  const status = $("#photo-status");
+  const file = $("#photo-file").files[0];
+  const date = $("#photo-date").value;
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) {
+    status.textContent = "That file is larger than 10 MB.";
+    return;
+  }
+  $("#photo-upload").disabled = true;
+  try {
+    status.textContent = "Preparing…";
+    const forms = await (await api("/api/photos/upload-form", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date_taken: date || undefined, original_type: file.type }),
+    })).json();
+    if (forms.error) throw new Error(forms.error);
+    status.textContent = "Uploading…";
+    await postForm(forms.original, file, file.type);
+    const analysis = await makeAnalysisCopy(file);
+    await postForm(forms.analysis, analysis, "image/jpeg");
+    const saved = await api("/api/photos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: forms.id,
+        date_taken: forms.date_taken,
+        original_key: forms.original.key,
+        analysis_key: forms.analysis.key,
+        original_type: file.type,
+        setting: $("#photo-setting").value || null,
+        note: $("#photo-note").value || null,
+      }),
+    });
+    if (!saved.ok) throw new Error((await saved.json()).error || "The photo could not be recorded.");
+    status.textContent = "Saved.";
+    $("#photo-form").reset();
+    $("#photo-date").value = new Date().toLocaleDateString("en-CA");
+    loadPhotos();
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    $("#photo-upload").disabled = false;
+  }
+}
+
+async function loadPhotos() {
+  const list = $("#photo-list");
+  try {
+    const response = await api("/api/photos");
+    if (!response.ok) {
+      list.replaceChildren(Object.assign(document.createElement("li"), { className: "muted", textContent: "Photos are not available here." }));
+      return;
+    }
+    const { photos } = await response.json();
+    if (!photos.length) {
+      list.replaceChildren(Object.assign(document.createElement("li"), { className: "muted", textContent: "No photos yet." }));
+      return;
+    }
+    list.replaceChildren(...photos.map((p) => {
+      const li = document.createElement("li");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.value = p.id;
+      box.className = "photo-pick";
+      const label = document.createElement("span");
+      label.textContent = ` ${p.date_taken}${p.setting ? ` · ${p.setting}` : ""}${p.note ? ` · ${p.note}` : ""}`;
+      li.append(box, label);
+      return li;
+    }));
+  } catch {
+    list.replaceChildren(Object.assign(document.createElement("li"), { className: "muted", textContent: "The photo list could not be loaded." }));
+  }
+}
+
+async function comparePhotos() {
+  const ids = [...document.querySelectorAll(".photo-pick:checked")].map((b) => b.value);
+  const status = $("#compare-status");
+  const result = $("#compare-result");
+  result.textContent = "";
+  if (ids.length < 2) {
+    status.textContent = "Select at least two photos.";
+    return;
+  }
+  status.textContent = "Comparing…";
+  try {
+    const response = await api("/api/photos/compare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+    const body = await response.json();
+    result.textContent = response.ok ? body.answer : body.error || "The comparison failed.";
+    status.textContent = "";
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
 async function start() {
   config = await (await fetch("/config.json")).json();
   $("#sign-in").addEventListener("click", () => signIn().catch((error) => ($("#status").textContent = error.message)));
@@ -391,6 +514,9 @@ async function start() {
   $("#ask-form").addEventListener("submit", askQuestion);
   $("#new-chat").addEventListener("click", startNewChat);
   $("#refresh-diet").addEventListener("click", refreshDiet);
+  $("#photo-form").addEventListener("submit", uploadPhoto);
+  $("#photo-compare").addEventListener("click", comparePhotos);
+  $("#photo-date").value = new Date().toLocaleDateString("en-CA");
   for (const turn of loadPending()) resendTurn(turn, 20);
   try {
     await finishSignIn();
@@ -411,6 +537,7 @@ async function start() {
   if (stillSignedIn) {
     loadChatList();
     loadDietStatus();
+    loadPhotos();
   }
   $("#status").textContent = stillSignedIn ? "Signed in." : "Not signed in.";
 }
