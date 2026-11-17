@@ -22,8 +22,12 @@ export function photoService(opts: { s3: S3Client; photosBucket: string; modelId
       const date = input.date_taken === undefined || input.date_taken === "" ? todayIn(OWNER_TIMEZONE, now()) : validateDateTaken(input.date_taken, now());
       if (typeof input.original_type !== "string" || !isOriginalType(input.original_type)) throw new Error("Only jpg, png, and HEIC originals are accepted");
       const id = newPhotoId();
-      const original = await uploadForm(opts.s3, opts.photosBucket, originalKey(date, id, input.original_type), input.original_type);
-      const analysis = await uploadForm(opts.s3, opts.photosBucket, analysisKey(date, id), "image/jpeg");
+      // The browser reads each object's key from the top level of its form. A presigned POST keeps the key only inside
+      // its fields, so the key is returned explicitly here.
+      const originalObjectKey = originalKey(date, id, input.original_type);
+      const analysisObjectKey = analysisKey(date, id);
+      const original = { ...(await uploadForm(opts.s3, opts.photosBucket, originalObjectKey, input.original_type)), key: originalObjectKey };
+      const analysis = { ...(await uploadForm(opts.s3, opts.photosBucket, analysisObjectKey, "image/jpeg")), key: analysisObjectKey };
       return { id, date_taken: date, original, analysis, max_bytes: PHOTO_MAX_BYTES };
     },
     async save(input) {
