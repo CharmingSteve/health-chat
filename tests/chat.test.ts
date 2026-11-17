@@ -26,7 +26,7 @@ describe("answerQuestion", () => {
     expect(runQuery).toHaveBeenCalledWith(sql);
     expect(out).toEqual({
       answer: "There are 3 lab rows.",
-      queries: [{ sql, ok: true, row_count: 1, bytes_scanned: 4060 }],
+      queries: [{ sql, ok: true, row_count: 1, bytes_scanned: 4060, columns: ["n"], rows: [["3"]] }],
       rounds: 2,
     });
   });
@@ -92,5 +92,19 @@ describe("systemPrompt", () => {
     expect(prompt).toContain("A day with no entry is unknown, not zero");
     expect(prompt).toContain("a correlation is not a cause");
     expect(prompt).toContain("Urgent symptoms");
+  });
+});
+
+describe("medication and forecast rules", () => {
+  const prompt = systemPrompt();
+  it("tells the model to look up brand names in the medical documents, not guess them", () => {
+    expect(prompt).toContain("search the medical documents");
+    expect(prompt).toContain("a brand name is not a food or a supplement");
+  });
+  it("says combinations keep their ingredients, so stopping one brand does not stop an ingredient", () => {
+    expect(prompt).toContain("stopping one brand does not stop an ingredient");
+  });
+  it("forbids predicting future lab values", () => {
+    expect(prompt).toContain("never predict a future lab value");
   });
 });

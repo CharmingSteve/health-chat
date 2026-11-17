@@ -24,7 +24,9 @@ export function systemPrompt(): string {
     "10. If a question needs data that is not in the tables, say it is not there. Before saying that, run SELECT DISTINCT on the relevant column to check the stored spelling.",
     "11. Every row's owner column is 'owner' (the only person in these tables). Do not filter on owner.",
     "12. Before adding up a duration or a distance, check its unit column (for example duration_unit) and convert if units differ.",
-    "13. Lab names are stored normalized and in lower case (for example hba1c, not HbA1c). Compare with lower(test_name) = 'hba1c' or use the names below exactly.",
+    "13. Medications: a brand name is not a food or a supplement. Before answering about a brand, search the medical documents: SELECT source_key, text FROM medical_documents WHERE lower(text) LIKE '%brand%' (use the lower-case brand name). Quote the document's ingredient list. A brand can contain more than one ingredient, and stopping one brand does not stop an ingredient that another brand still contains. The documents may be out of date, so say what the owner has told you about current doses.",
+    "14. Forecasts: never predict a future lab value, a score, or an outcome. Describe the past values, their dates, the reference range, and when the next test is due, and suggest asking the doctor. An A1C reflects roughly the last 2 to 3 months, so a single week of diet entries cannot change the next value in a way that can be predicted from these tables.",
+    "15. Lab names are stored normalized and in lower case (for example hba1c, not HbA1c). Compare with lower(test_name) = 'hba1c' or use the names below exactly.",
     "",
     "Tables (query only these, with plain names):",
     schema,
@@ -48,12 +50,13 @@ export interface ChatDeps {
 
 export interface ChatAnswer {
   answer: string;
-  queries: { sql: string; ok: boolean; row_count: number; error?: string; bytes_scanned: number }[];
+  queries: { sql: string; ok: boolean; row_count: number; error?: string; bytes_scanned: number; columns: string[]; rows: (string | null)[][] }[];
   rounds: number;
 }
 
-export async function answerQuestion(question: string, deps: ChatDeps): Promise<ChatAnswer> {
-  const messages: unknown[] = [{ role: "user", content: [{ text: question }] }];
+export async function answerQuestion(question: string, deps: ChatDeps, context = ""): Promise<ChatAnswer> {
+  const text = context ? `${context}\n\nCurrent question: ${question}` : question;
+  const messages: unknown[] = [{ role: "user", content: [{ text }] }];
   const queries: ChatAnswer["queries"] = [];
   for (let round = 1; round <= MAX_ROUNDS; round += 1) {
     const turn = await deps.callModel(messages);
@@ -69,7 +72,7 @@ export async function answerQuestion(question: string, deps: ChatDeps): Promise<
     for (const use of turn.toolUses) {
       const sql = typeof use.input.sql === "string" ? use.input.sql : "";
       const result = use.name === "query_data" && sql ? await deps.runQuery(sql) : failedResult("Unknown tool or missing sql");
-      queries.push({ sql: result.sql_run || sql, ok: result.ok, row_count: result.row_count, bytes_scanned: result.bytes_scanned, ...(result.error ? { error: result.error } : {}) });
+      queries.push({ sql: result.sql_run || sql, ok: result.ok, row_count: result.row_count, bytes_scanned: result.bytes_scanned, columns: result.columns, rows: result.rows, ...(result.error ? { error: result.error } : {}) });
       results.push({
         toolResult: {
           toolUseId: use.toolUseId,

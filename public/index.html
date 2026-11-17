@@ -19,8 +19,20 @@
 
   <main id="app" hidden>
     <section>
+      <h2>Chats from the last 4 months</h2>
+      <p class="muted">Chats you have used in the last 4 months. Older chats stay saved and can be reopened from the list when they are touched again.</p>
+      <ul id="chat-list" class="chat-list"><li class="muted">Loading…</li></ul>
+    </section>
+
+    <section>
       <h2>Ask about your data</h2>
       <p class="muted">Answers come from SQL over your tables. Each answer shows the queries it ran. Not medical advice.</p>
+      <div class="row">
+        <button id="new-chat" type="button">New chat</button>
+        <span id="chat-title" class="muted">New chat</span>
+      </div>
+      <div id="thread" class="thread" aria-live="polite"></div>
+      <div id="save-banner" class="banner" hidden></div>
       <form id="ask-form">
         <label for="question">Question</label>
         <textarea id="question" rows="3" maxlength="1000" placeholder="For example: what were my HbA1c results, and how many workouts of each type did I log in 2026?" required></textarea>
@@ -35,7 +47,7 @@
 
     <section>
       <h2>Status</h2>
-      <p id="data-status" class="muted">No health data is loaded yet. Ingest has not been built.</p>
+      <p id="data-status" class="muted">Health data is loaded from the tables. Use the question box above; each answer lists the queries it ran.</p>
       <p>Model setting: <code>BedrockModel</code> in <code>infra/template.yaml</code>.</p>
       <div class="row">
         <button id="run-smoke" type="button">Run model check</button>
