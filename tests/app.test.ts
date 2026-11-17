@@ -50,8 +50,8 @@ describe("public routes", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("<title>health-chat</title>");
-    // Nine guide sections are <details> dropdowns in the page. Count them exactly.
-    expect(html.match(/<details>/g)?.length).toBe(9);
+    // Thirteen guide sections are <details> dropdowns in the page. Count them exactly.
+    expect(html.match(/<details>/g)?.length).toBe(13);
   });
 
   it("GET /config.json returns the hosted-UI domain and the app client id only", async () => {
@@ -175,5 +175,52 @@ describe("model check results", () => {
     const body = await res.text();
     expect(body).not.toContain("AccessDenied");
     expect(body).not.toContain("secret details");
+  });
+});
+
+describe("POST /api/ask", () => {
+  const ask = vi.fn(async (question: string) => ({ answer: `echo: ${question}`, queries: [], rounds: 1 }));
+  const post = (app: ReturnType<typeof makeApp>["app"], body: unknown, token = "user-token") =>
+    app.request("/api/ask", { method: "POST", headers: { ...bearer(token), "Content-Type": "application/json" }, body: typeof body === "string" ? body : JSON.stringify(body) });
+
+  it("answers the owner's question with the chat result", async () => {
+    const { app } = makeApp({ ask });
+    const res = await post(app, { question: "  how many labs?  " });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ answer: "echo: how many labs?", queries: [], rounds: 1 });
+    expect(ask).toHaveBeenLastCalledWith("how many labs?");
+  });
+
+  it("refuses with 401 and never calls the assistant when there is no token", async () => {
+    const local = vi.fn(async () => ({ answer: "x", queries: [], rounds: 1 }));
+    const { app } = makeApp({ ask: local });
+    const res = await app.request("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: "q" }) });
+    expect(res.status).toBe(401);
+    expect(local).not.toHaveBeenCalled();
+  });
+
+  it("refuses the smoke token (it may only use /api/smoke)", async () => {
+    const { app } = makeApp({ ask });
+    expect((await post(app, { question: "q" }, "smoke-token")).status).toBe(403);
+  });
+
+  it("returns 400 for a missing, empty, or overlong question, and for bad JSON", async () => {
+    const { app } = makeApp({ ask });
+    expect((await post(app, {})).status).toBe(400);
+    expect((await post(app, { question: "   " })).status).toBe(400);
+    expect((await post(app, { question: "x".repeat(1001) })).status).toBe(400);
+    expect((await post(app, "{not json")).status).toBe(400);
+  });
+
+  it("returns 503 in an environment where data is not enabled", async () => {
+    const { app } = makeApp();
+    expect((await post(app, { question: "q" })).status).toBe(503);
+  });
+
+  it("returns 502 and no internal detail when the assistant fails", async () => {
+    const { app } = makeApp({ ask: async () => { throw new Error("AccessDenied: role details"); } });
+    const res = await post(app, { question: "q" });
+    expect(res.status).toBe(502);
+    expect(await res.text()).not.toContain("AccessDenied");
   });
 });

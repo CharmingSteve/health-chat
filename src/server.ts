@@ -3,6 +3,9 @@ import { serve } from "@hono/node-server";
 import { verifyCognitoToken } from "./auth.js";
 import { createConverse } from "./bedrock.js";
 import { createApp } from "./app.js";
+import { answerQuestion } from "./chat.js";
+import { athenaRunner } from "./query.js";
+import { createChatModel } from "./bedrock.js";
 
 // Web Functions give the server its host and port in AWS_LAMBDA_HTTP_ENDPOINT (host:port).
 // Locally the fallback is used.
@@ -24,11 +27,23 @@ const clientId = required("COGNITO_CLIENT_ID");
 const smokeClientId = process.env.SMOKE_CLIENT_ID || undefined;
 const cognitoDomain = required("COGNITO_DOMAIN");
 
+// Data questions run only where DATA_ENABLED=true (production). Staging has no access to the tables.
+const dataEnabled = process.env.DATA_ENABLED === "true";
+const modelId = required("BEDROCK_MODEL");
+const ask = dataEnabled
+  ? (question: string) =>
+      answerQuestion(question, {
+        callModel: createChatModel(modelId),
+        runQuery: athenaRunner({ workgroup: required("ATHENA_WORKGROUP"), database: required("GLUE_DATABASE") }),
+      })
+  : undefined;
+
 const app = createApp({
   verify: (token) => verifyCognitoToken(token, { userPool, clientId, ...(smokeClientId ? { smokeClientId } : {}) }),
   clientId,
   ...(smokeClientId ? { smokeClientId } : {}),
-  converse: createConverse(required("BEDROCK_MODEL")),
+  converse: createConverse(modelId),
+  ...(ask ? { ask } : {}),
   browserConfig: { domain: cognitoDomain, clientId },
   publicDir: resolve(import.meta.dirname, "..", "public"),
 });

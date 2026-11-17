@@ -117,11 +117,60 @@ async function runModelCheck() {
   }
 }
 
+function renderQueries(queries) {
+  const box = $("#queries");
+  box.replaceChildren();
+  if (!queries.length) return;
+  const details = document.createElement("details");
+  const summary = document.createElement("summary");
+  summary.textContent = `Queries run (${queries.length})`;
+  details.append(summary);
+  for (const q of queries) {
+    const pre = document.createElement("pre");
+    pre.className = "sql";
+    pre.textContent = `${q.ok ? `${q.row_count} rows, ${q.bytes_scanned} bytes scanned` : `Refused or failed: ${q.error}`}\n${q.sql}`;
+    details.append(pre);
+  }
+  box.append(details);
+}
+
+async function askQuestion(event) {
+  event.preventDefault();
+  const question = $("#question").value.trim();
+  const status = $("#ask-status");
+  const button = $("#ask-button");
+  if (!question) return;
+  button.disabled = true;
+  status.textContent = "Thinking…";
+  $("#answer").textContent = "";
+  renderQueries([]);
+  try {
+    const response = await api("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      $("#answer").textContent = body.error || `Request failed (${response.status}).`;
+    } else {
+      $("#answer").textContent = body.answer;
+      renderQueries(body.queries || []);
+    }
+    status.textContent = "";
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function start() {
   config = await (await fetch("/config.json")).json();
   $("#sign-in").addEventListener("click", () => signIn().catch((error) => ($("#status").textContent = error.message)));
   $("#sign-out").addEventListener("click", signOut);
   $("#run-smoke").addEventListener("click", runModelCheck);
+  $("#ask-form").addEventListener("submit", askQuestion);
   try {
     await finishSignIn();
   } catch (error) {

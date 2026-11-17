@@ -48,7 +48,7 @@ jobs:
           set -euo pipefail
           python3 -m venv "$RUNNER_TEMP/cfn"
           "$RUNNER_TEMP/cfn/bin/pip" install --quiet cfn-lint==1.60.1
-          "$RUNNER_TEMP/cfn/bin/cfn-lint" infra/template.yaml infra/auth.yaml infra/artifacts.yaml
+          "$RUNNER_TEMP/cfn/bin/cfn-lint" infra/template.yaml infra/auth.yaml infra/artifacts.yaml infra/data.yaml
       - name: Upload immutable deployment ZIP
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

@@ -16,6 +16,12 @@ const mutations = [
     from: 'if (isSmoke && !(c.req.method === "POST" && c.req.path === "/api/smoke")) {', to: "if (false) {" },
   { name: "drop auth on /api", file: "src/app.ts",
     from: 'app.use("/api/*", requireAuth);', to: "" },
+  { name: "let a write keyword through the query check", file: "src/query.ts",
+    from: "if (forbidden) return", to: "if (false) return" },
+  { name: "let an unknown table through the query check", file: "src/query.ts",
+    from: "if (!ALLOWED.has(name) && !ctes.has(name)) {", to: "if (false) {" },
+  { name: "let a comment through the query check", file: "src/query.ts",
+    from: 'if (/--|\\/\\*/.test(trimmed))', to: "if (false)" },
   { name: "loose model reply check", file: "src/bedrock.ts",
     from: 'return reply.trim() === "4";', to: 'return reply.includes("4");' },
 ];

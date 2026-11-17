@@ -51,6 +51,10 @@ const callback = stacks.some(({ StackName }) => StackName === stack)
   ? `${outputs(stack).WebFunctionUrl}/`
   : "http://localhost:3000/";
 
+// Table definitions (Glue) and the read-only Athena workgroup. Same in both environments; only production may read them.
+const TABLES_BUCKET = "health-chat-tables-570989156105-us-east-1-an";
+deploy("infra/data.yaml", "health-chat-data", [`TablesBucket=${TABLES_BUCKET}`]);
+
 deploy("infra/artifacts.yaml", artifactsStack);
 const artifacts = outputs(artifactsStack);
 const key = `releases/${process.env.BUILD_REVISION}.zip`;
@@ -72,6 +76,8 @@ deploy(
     `CognitoDomain=${shared.CognitoDomain}`,
     `CognitoClientId=${authentication.HealthClientId}`,
     `SmokeClientId=${authentication.SmokeClientId}`,
+    `DataEnabled=${environment === "production" ? "true" : "false"}`,
+    `TablesBucket=${TABLES_BUCKET}`,
   ],
   true,
 );
