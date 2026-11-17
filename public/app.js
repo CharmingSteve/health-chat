@@ -423,14 +423,29 @@ function chooseDate(exifRaw, fileDate, today) {
   return { date, source, warning };
 }
 
+// Reads the camera's own date and location. Returns a note when something could not be read, so the page can say why.
 async function readCaptureDate(file) {
+  const result = { exifRaw: null, location: null, note: "" };
   try {
     if (!exifModule) exifModule = await import("/vendor/exifr.mjs");
-    const raw = await exifModule.parse(file, { pick: ["DateTimeOriginal"], reviveValues: false });
-    return raw ? raw.DateTimeOriginal : undefined;
-  } catch {
-    return undefined;
+    const parsed = await exifModule.parse(file, { pick: ["DateTimeOriginal"] });
+    const d = parsed && parsed.DateTimeOriginal;
+    if (d instanceof Date && !Number.isNaN(d.getTime())) {
+      // The library reads the camera's local time as this computer's local time, so the local parts are the camera's date.
+      // Written in the camera's raw form so the same rule as the server reads it.
+      const pad = (n) => String(n).padStart(2, "0");
+      result.exifRaw = `${d.getFullYear()}:${pad(d.getMonth() + 1)}:${pad(d.getDate())} 00:00:00`;
+    }
+  } catch (error) {
+    result.note = `camera date not read (${error.name}: ${error.message})`;
   }
+  try {
+    const gps = await exifModule.gps(file);
+    if (gps && Number.isFinite(gps.latitude) && Number.isFinite(gps.longitude)) result.location = { lat: gps.latitude, lon: gps.longitude };
+  } catch {
+    // No location in this photo; that is fine.
+  }
+  return result;
 }
 
 async function decodeHeic(file) {
@@ -457,8 +472,8 @@ async function makeAnalysisCopy(file, type) {
   let source;
   try {
     source = isHeicType(type) ? await decodeHeic(file) : await createImageBitmap(file);
-  } catch {
-    throw new Error("This HEIC could not be read in this browser. Export a JPEG from Photos and drop that instead.");
+  } catch (error) {
+    throw new Error(`This photo could not be read in this browser (${error.name}: ${error.message}). Export a JPEG from Photos and drop that instead.`);
   }
   const width = source.width;
   const height = source.height;
@@ -482,9 +497,10 @@ async function addFiles(files) {
       $("#photo-status").textContent = `${file.name}: larger than 10 MB.`;
       continue;
     }
-    const exifRaw = await readCaptureDate(file);
-    const chosen = chooseDate(exifRaw, new Date(file.lastModified), today);
-    pending.push({ file, type, date: chosen.date, source: chosen.source, warning: chosen.warning, status: "" });
+    const read = await readCaptureDate(file);
+    const chosen = chooseDate(read.exifRaw, new Date(file.lastModified), today);
+    const preview = isHeicType(type) ? null : URL.createObjectURL(file);
+    pending.push({ file, type, date: chosen.date, source: chosen.source, warning: chosen.warning, status: read.note, location: read.location, preview });
   }
   renderPending();
 }
@@ -494,6 +510,13 @@ function renderPending() {
   box.replaceChildren(...pending.map((item, index) => {
     const row = document.createElement("div");
     row.className = "pending-row";
+    if (item.preview) {
+      const img = document.createElement("img");
+      img.src = item.preview;
+      img.alt = "";
+      img.className = "thumb-small";
+      row.append(img);
+    }
     const name = document.createElement("span");
     name.textContent = item.file.name;
     const date = document.createElement("input");
@@ -514,6 +537,12 @@ function renderPending() {
       w.className = "warn";
       w.textContent = item.warning;
       row.append(w);
+    }
+    if (item.location) {
+      const place = document.createElement("span");
+      place.className = "muted";
+      place.textContent = `place ${item.location.lat.toFixed(3)}, ${item.location.lon.toFixed(3)}`;
+      row.append(place);
     }
     if (item.status) {
       const st = document.createElement("span");
@@ -563,6 +592,7 @@ async function uploadOne(item) {
       original_key: forms.original.key,
       analysis_key: forms.analysis.key,
       original_type: item.type,
+      location: item.location,
       setting: $("#photo-setting").value || null,
       note: $("#photo-note").value || null,
     }),
@@ -606,32 +636,49 @@ function setupPhotoDrop() {
   $("#photo-upload").addEventListener("click", uploadAll);
 }
 
+async function thumbUrl(id) {
+  const response = await api(`/api/photos/${id}/thumb`);
+  if (!response.ok) throw new Error("thumbnail");
+  return URL.createObjectURL(await response.blob());
+}
+
 async function loadPhotos() {
   const list = $("#photo-list");
   try {
     const response = await api("/api/photos");
     if (!response.ok) {
-      list.replaceChildren(Object.assign(document.createElement("li"), { className: "muted", textContent: "Photos are not available here." }));
+      list.replaceChildren(Object.assign(document.createElement("div"), { className: "muted", textContent: "Photos are not available here." }));
       return;
     }
     const { photos } = await response.json();
     if (!photos.length) {
-      list.replaceChildren(Object.assign(document.createElement("li"), { className: "muted", textContent: "No photos yet." }));
+      list.replaceChildren(Object.assign(document.createElement("div"), { className: "muted", textContent: "No photos yet." }));
       return;
     }
-    list.replaceChildren(...photos.map((p) => {
-      const li = document.createElement("li");
+    list.replaceChildren(...await Promise.all(photos.map(async (p) => {
+      const card = document.createElement("label");
+      card.className = "photo-card";
       const box = document.createElement("input");
       box.type = "checkbox";
       box.value = p.id;
       box.className = "photo-pick";
-      const label = document.createElement("span");
-      label.textContent = ` ${p.date_taken}${p.setting ? ` · ${p.setting}` : ""}${p.note ? ` · ${p.note}` : ""}`;
-      li.append(box, label);
-      return li;
-    }));
+      const img = document.createElement("img");
+      img.alt = "";
+      img.className = "thumb";
+      try {
+        img.src = await thumbUrl(p.id);
+      } catch {
+        img.alt = "no preview";
+      }
+      const caption = document.createElement("span");
+      caption.className = "muted";
+      const place = p.location ? ` · ${p.location.lat.toFixed(3)}, ${p.location.lon.toFixed(3)}` : "";
+      caption.textContent = `${p.date_taken}${place}${p.setting ? ` · ${p.setting}` : ""}`;
+      card.append(box, img, caption);
+      return card;
+    })));
   } catch {
-    list.replaceChildren(Object.assign(document.createElement("li"), { className: "muted", textContent: "The photo list could not be loaded." }));
+    list.replaceChildren(Object.assign(document.createElement("div"), { className: "muted", textContent: "The photo list could not be loaded." }));
   }
 }
 
