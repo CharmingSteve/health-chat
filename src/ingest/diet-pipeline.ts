@@ -84,8 +84,11 @@ export async function runDietImport(store: ObjectStore, b: DietBuckets, trigger:
 
     // 3. Parse, apply the named exclusions, and write the tables.
     const stuntman = parseSnapshotLines(lines, OWNER);
-    const { kept: entries, excluded } = applyExclusions([...stuntman.entries, ...legacyEntries]);
-    const days: DietDay[] = buildDietDays(entries, stuntman.days, OWNER);
+    const combined = [...stuntman.entries, ...legacyEntries];
+    const { kept: entries, excluded } = applyExclusions(combined);
+    const keptDays = new Set(entries.map((e) => e.day));
+    const droppedDays = new Set(combined.map((e) => e.day).filter((d) => !keptDays.has(d)));
+    const days: DietDay[] = buildDietDays(entries, stuntman.days, OWNER, droppedDays);
     const entriesPath = join(work, "diet_entries.parquet");
     const daysPath = join(work, "diet_days.parquet");
     const entryCount = await writeParquet(entries, {
@@ -93,7 +96,7 @@ export async function runDietImport(store: ObjectStore, b: DietBuckets, trigger:
       raw_text: "VARCHAR", calories: "DOUBLE", quantity: "DOUBLE", unit: "VARCHAR", food_id: "VARCHAR", superseded: "BOOLEAN",
     }, entriesPath);
     const dayCount = await writeParquet(days, {
-      owner: "VARCHAR", day: "VARCHAR", burn_total: "DOUBLE", burn_effective: "DOUBLE", burn_basis: "VARCHAR", completeness: "VARCHAR", net_reliable: "BOOLEAN", eligibility: "VARCHAR", burn_source: "VARCHAR",
+      owner: "VARCHAR", day: "VARCHAR", burn_total: "DOUBLE", burn_effective: "DOUBLE", burn_basis: "VARCHAR", completeness: "VARCHAR", completeness_basis: "VARCHAR", net_reliable: "BOOLEAN", eligibility: "VARCHAR", burn_source: "VARCHAR",
     }, daysPath);
     await store.put(b.tablesBucket, `${tableLocation("diet_entries")}data.parquet`, readFileSync(entriesPath));
     await store.put(b.tablesBucket, `${tableLocation("diet_days")}data.parquet`, readFileSync(daysPath));

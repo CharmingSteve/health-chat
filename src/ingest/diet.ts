@@ -24,8 +24,10 @@ export interface DietDay {
   burn_effective: number;
   /** "recorded" when the owner's burn was written; "assumed_default" when DEFAULT_BURN is assumed. */
   burn_basis: "recorded" | "assumed_default";
-  /** complete | partial | missing (from stuntman-diet), or unknown for days from the legacy master (no completeness recorded). */
+  /** complete | partial | missing (from stuntman-diet). Legacy master days are complete (owner confirmed). */
   completeness: string;
+  /** "stuntman" when the app recorded completeness; "owner_confirmed_legacy" for legacy master days. */
+  completeness_basis: "stuntman" | "owner_confirmed_legacy";
   /** True only when the whole day's intake is known: completeness is complete. Net calories are reliable only then. */
   net_reliable: boolean;
   eligibility: string | null;
@@ -33,7 +35,7 @@ export interface DietDay {
 }
 
 /** Day metadata as the app wrote it; buildDietDays adds the effective burn. */
-export type DietMeta = Omit<DietDay, "burn_effective" | "burn_basis" | "completeness" | "net_reliable"> & { completeness: string | null };
+export type DietMeta = Omit<DietDay, "burn_effective" | "burn_basis" | "completeness" | "completeness_basis" | "net_reliable"> & { completeness: string | null };
 
 /**
  * The owner's rule: a day burns DEFAULT_BURN kilocalories unless a burn is recorded. Recorded burns are written only
@@ -45,10 +47,12 @@ export const DEFAULT_BURN = 2000;
  * One row for every day that has a food or burn entry, and for every day the app has metadata for.
  * Days with no entries at all are not included: they were not tracked, so no burn is assumed for them.
  */
-export function buildDietDays(entries: DietEntry[], metaDays: DietMeta[], owner: string): DietDay[] {
+export function buildDietDays(entries: DietEntry[], metaDays: DietMeta[], owner: string, droppedDays: Set<string> = new Set()): DietDay[] {
   const meta = new Map(metaDays.map((d) => [d.day, d]));
   const tracked = new Set(entries.filter((e) => !e.superseded).map((e) => e.day));
   for (const day of meta.keys()) tracked.add(day);
+  // A day whose entries were all removed by a named exclusion is not a tracked day.
+  for (const day of droppedDays) tracked.delete(day);
   return [...tracked].sort().map((day) => {
     const m = meta.get(day);
     // A burn is written only when it is above the default (exercise). A stored burn equal to the default is the default.
@@ -59,8 +63,10 @@ export function buildDietDays(entries: DietEntry[], metaDays: DietMeta[], owner:
       burn_total: m?.burn_total ?? null,
       burn_effective: recorded ? (m!.burn_total as number) : DEFAULT_BURN,
       burn_basis: recorded ? "recorded" : "assumed_default",
-      completeness: m?.completeness ?? "unknown",
-      net_reliable: m?.completeness === "complete",
+      // Legacy master days were logged as complete days (confirmed by the owner); stuntman days carry their own mark.
+      completeness: m ? (m.completeness ?? "unknown") : "complete",
+      completeness_basis: m ? "stuntman" : "owner_confirmed_legacy",
+      net_reliable: m ? m.completeness === "complete" : true,
       eligibility: m?.eligibility ?? null,
       burn_source: m?.burn_source ?? null,
     };

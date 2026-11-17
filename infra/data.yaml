@@ -131,7 +131,7 @@
         },
         "TableInput": {
           "Name": "diet_days",
-          "Description": "One row per tracked day (a day with at least one food or burn entry). burn_effective is the burn used for net calories: the recorded burn when burn_basis=recorded, otherwise 2000 kcal assumed (burn_basis=assumed_default), because a burn is written only when it is above the default. burn_total is the recorded value only. completeness: complete (whole-day intake), partial (not a whole-day total), missing (not logged), unknown (legacy days). net_reliable is true only for complete days. Days with no entries are not here.",
+          "Description": "One row per tracked day (a day with at least one food or burn entry). burn_effective is the burn used for net calories: the recorded burn when burn_basis=recorded, otherwise 2000 kcal assumed (burn_basis=assumed_default), because a burn is written only when it is above the default. burn_total is the recorded value only. completeness: complete (whole-day intake), partial (not a whole-day total), missing (not logged). Legacy master days are complete (completeness_basis=owner_confirmed_legacy). net_reliable is true for complete days. Days with no entries are not here.",
           "TableType": "EXTERNAL_TABLE",
           "Parameters": {
             "classification": "parquet",
@@ -161,6 +161,10 @@
               },
               {
                 "Name": "completeness",
+                "Type": "string"
+              },
+              {
+                "Name": "completeness_basis",
                 "Type": "string"
               },
               {
