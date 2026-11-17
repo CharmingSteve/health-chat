@@ -2,7 +2,7 @@ import { gunzipSync } from "node:zlib";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyExclusions, parseLegacyCsv, parseSnapshotLines, type DietDay, type DietEntry } from "./diet.js";
+import { applyExclusions, buildDietDays, parseLegacyCsv, parseSnapshotLines, type DietDay, type DietEntry } from "./diet.js";
 import { writeParquet } from "./parquet.js";
 import { tableLocation } from "./schemas.js";
 
@@ -85,7 +85,7 @@ export async function runDietImport(store: ObjectStore, b: DietBuckets, trigger:
     // 3. Parse, apply the named exclusions, and write the tables.
     const stuntman = parseSnapshotLines(lines, OWNER);
     const { kept: entries, excluded } = applyExclusions([...stuntman.entries, ...legacyEntries]);
-    const days: DietDay[] = stuntman.days;
+    const days: DietDay[] = buildDietDays(entries, stuntman.days, OWNER);
     const entriesPath = join(work, "diet_entries.parquet");
     const daysPath = join(work, "diet_days.parquet");
     const entryCount = await writeParquet(entries, {
@@ -93,7 +93,7 @@ export async function runDietImport(store: ObjectStore, b: DietBuckets, trigger:
       raw_text: "VARCHAR", calories: "DOUBLE", quantity: "DOUBLE", unit: "VARCHAR", food_id: "VARCHAR", superseded: "BOOLEAN",
     }, entriesPath);
     const dayCount = await writeParquet(days, {
-      owner: "VARCHAR", day: "VARCHAR", burn_total: "DOUBLE", completeness: "VARCHAR", eligibility: "VARCHAR", burn_source: "VARCHAR",
+      owner: "VARCHAR", day: "VARCHAR", burn_total: "DOUBLE", burn_effective: "DOUBLE", burn_basis: "VARCHAR", completeness: "VARCHAR", eligibility: "VARCHAR", burn_source: "VARCHAR",
     }, daysPath);
     await store.put(b.tablesBucket, `${tableLocation("diet_entries")}data.parquet`, readFileSync(entriesPath));
     await store.put(b.tablesBucket, `${tableLocation("diet_days")}data.parquet`, readFileSync(daysPath));

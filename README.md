@@ -42,6 +42,10 @@ To try a question from your machine, without the browser: `AWS_PROFILE=click AWS
 Retention rules on the tables bucket: old table versions are deleted after 30 days; Athena results after 7 days.
 Every bucket is private, versioned, encrypted with AWS-managed keys, and blocks public access.
 
+## Burn and net calories
+
+A day's burn is the recorded burn if one was written; otherwise the default of 2,000 kcal is assumed. stuntman-diet writes a burn only when it is above 2,000 (exercise), so a day without one is a default day. In `diet_days`, `burn_effective` is the burn used for net calories and `burn_basis` says whether it was `recorded` or `assumed_default`. Days with no food or burn entries are not tracked, and no burn is assumed for them. The chat labels assumed burns each time it uses them.
+
 ## Adding new data
 
 Run these from the repo root, with `export AWS_PROFILE=click AWS_REGION=us-east-1`. Each import reads the sources again and replaces the tables, so re-running is safe. Afterwards, check the ledger (below) and ask a test question.

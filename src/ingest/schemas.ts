@@ -18,8 +18,8 @@ export const TABLES: TableSchema[] = [
   },
   {
     name: "diet_days",
-    description: "Day metadata from stuntman-diet: burn total, completeness, eligibility. Only days the app has tracked appear here.",
-    columns: { owner: "VARCHAR", day: "VARCHAR", burn_total: "DOUBLE", completeness: "VARCHAR", eligibility: "VARCHAR", burn_source: "VARCHAR" },
+    description: "One row per tracked day (a day with at least one food or burn entry). burn_effective is the burn used for net calories: the recorded burn when burn_basis=recorded, otherwise 2000 kcal assumed (burn_basis=assumed_default), because a burn is written only when it is above the default. burn_total is the recorded value only. Days with no entries are not here.",
+    columns: { owner: "VARCHAR", day: "VARCHAR", burn_total: "DOUBLE", burn_effective: "DOUBLE", burn_basis: "VARCHAR", completeness: "VARCHAR", eligibility: "VARCHAR", burn_source: "VARCHAR" },
   },
   {
     name: "apple_records",

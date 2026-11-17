@@ -131,7 +131,7 @@
         },
         "TableInput": {
           "Name": "diet_days",
-          "Description": "Day metadata from stuntman-diet: burn total, completeness, eligibility. Only days the app has tracked appear here.",
+          "Description": "One row per tracked day (a day with at least one food or burn entry). burn_effective is the burn used for net calories: the recorded burn when burn_basis=recorded, otherwise 2000 kcal assumed (burn_basis=assumed_default), because a burn is written only when it is above the default. burn_total is the recorded value only. Days with no entries are not here.",
           "TableType": "EXTERNAL_TABLE",
           "Parameters": {
             "classification": "parquet",
@@ -150,6 +150,14 @@
               {
                 "Name": "burn_total",
                 "Type": "double"
+              },
+              {
+                "Name": "burn_effective",
+                "Type": "double"
+              },
+              {
+                "Name": "burn_basis",
+                "Type": "string"
               },
               {
                 "Name": "completeness",
