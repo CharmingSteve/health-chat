@@ -38,7 +38,7 @@ describe("photo records", () => {
     expect(validateMeta(good, "owner")).toMatchObject({ date_taken: "2026-11-10", setting: "gym", note: null, owner: "owner" });
   });
   it("keeps the location of the original, and rejects a location out of range", () => {
-    expect(validateMeta({ ...good, location: { lat: 31.7461234, lon: 35.2199999 } }, "owner").location).toEqual({ lat: 31.746123, lon: 35.2 });
+    expect(validateMeta({ ...good, location: { lat: 31.7461234, lon: 35.2199999 } }, "owner").location).toEqual({ lat: 31.746123, lon: 35.22 });
     expect(validateMeta({ ...good }, "owner").location).toBeNull();
     expect(() => validateMeta({ ...good, location: { lat: 95, lon: 0 } }, "owner")).toThrow("out of range");
   });
