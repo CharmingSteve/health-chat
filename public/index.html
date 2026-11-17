@@ -64,6 +64,11 @@
         <label for="question">Question</label>
         <textarea id="question" rows="3" maxlength="1000" placeholder="For example: what were my HbA1c results, and how many workouts of each type did I log in 2026?" required></textarea>
         <div class="row">
+          <label for="ask-images" class="muted">Attach photos (up to 4)</label>
+          <input id="ask-images" type="file" multiple accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif,.jpg,.jpeg,.png">
+          <span id="ask-attachments" class="muted"></span>
+        </div>
+        <div class="row">
           <button id="ask-button" type="submit">Ask</button>
           <span id="ask-status" class="muted"></span>
         </div>

@@ -51,6 +51,14 @@ describe("photo routes", () => {
     const res = await makeApp(svc).request("/api/photos/compare", { method: "POST", headers: bearer, body: JSON.stringify({ ids: ["a"] }) });
     expect(res.status).toBe(400);
   });
+  it("answers 503 with the pause message while comparisons are paused", async () => {
+    const { PhotoComparePausedError } = await import("../src/photo-service.js");
+    const svc = service();
+    svc.compare = vi.fn(async () => { throw new PhotoComparePausedError(); });
+    const res = await makeApp(svc).request("/api/photos/compare", { method: "POST", headers: bearer, body: JSON.stringify({ ids: ["a", "b"] }) });
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toContain("paused");
+  });
   it("needs a token, and is not available where photos are not enabled (staging)", async () => {
     expect((await makeApp(service()).request("/api/photos")).status).toBe(401);
     expect((await makeApp().request("/api/photos", { headers: bearer })).status).toBe(503);

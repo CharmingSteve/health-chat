@@ -48,7 +48,7 @@ Every bucket is private, versioned, encrypted with AWS-managed keys, and blocks 
 - The date comes from the photo itself (the camera's capture date). If a photo has none, the file's date is used, and failing that, today. Each row shows where its date came from, and you can change it before uploading. A future date or one before 2000 is flagged, not blocked.
 - HEIC photos are decoded in the browser to make the analysis copy. If a HEIC can't be read in the browser, export a JPEG from Photos instead; nothing is uploaded for that file.
 - Each photo is stored in `health-chat-photos-570989156105-us-east-1-an`: the original as you took it (location and device details kept), and a smaller analysis copy made in the browser (re-encoded, so it carries no location). Nothing is deleted.
-- Compare two to eight photos from the page. They are compared in date order. The answer gives visual estimates, labelled as such, with a range and a confidence, and describes what it can see. Injuries: it describes swelling, redness, bruising, or bleeding. For severe signs it tells you to seek urgent care.
+- Photo comparison is paused while image descriptions are checked for reliability.
 - Estimates are not measurements. Measured weights and body-composition readings are the reference.
 
 Manual checks (automated tests can't drag files):

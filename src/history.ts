@@ -34,6 +34,8 @@ export interface TurnRecord {
   model: string;
   rounds: number;
   queries: QueryRecord[];
+  /** Ids of the progress photos the answer looked at (the images themselves are not stored in the chat record). */
+  photo_ids?: string[];
 }
 
 export interface ConversationSummary {

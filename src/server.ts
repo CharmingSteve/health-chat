@@ -5,7 +5,7 @@ import { createConverse } from "./bedrock.js";
 import { createApp } from "./app.js";
 import { makeAsk } from "./ask.js";
 import { ownerNotesBlock, readOwnerNotes } from "./owner-notes.js";
-import { photoService } from "./photo-service.js";
+import { chatPhotoAccess, photoService } from "./photo-service.js";
 import { createChatModel } from "./bedrock.js";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
@@ -40,6 +40,8 @@ const ask = dataEnabled
       database: required("GLUE_DATABASE"),
       // The owner's stated pattern, if the owner has written one. Read on each question.
       ownerNotes: async () => ownerNotesBlock(await readOwnerNotes(new S3Client({}), required("TABLES_BUCKET"))),
+      // The chat can list and view the owner's progress photos (analysis copies, no location).
+      ...(process.env.PHOTOS_BUCKET ? { photos: chatPhotoAccess(new S3Client({}), process.env.PHOTOS_BUCKET) } : {}),
     })
   : undefined;
 

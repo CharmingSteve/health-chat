@@ -4,7 +4,7 @@ import { Hono, type Context, type Next } from "hono";
 import { errors, type JWTPayload } from "jose";
 import type { VerifiedUser } from "./auth.js";
 import { SMOKE_PROMPT, smokeReplyIsCorrect, type Converse } from "./bedrock.js";
-import type { ChatAnswer } from "./chat.js";
+import type { ChatAnswer, ImageInput } from "./chat.js";
 import { isValidPhotoId } from "./photos.js";
 import { buildContext, isValidId, listConversations, readConversation, saveTurn, subjectFrom, type S3Like, type TurnRecord } from "./history.js";
 import { randomUUID } from "node:crypto";
@@ -17,7 +17,7 @@ export interface AppDeps {
   smokeClientId?: string;
   converse: Converse;
   /** Answers a data question. Absent in environments where the data is not enabled. */
-  ask?: (question: string, context: string) => Promise<ChatAnswer>;
+  ask?: (question: string, context: string, images?: ImageInput[]) => Promise<ChatAnswer>;
   /** Chat history in S3 (production only). Absent where history is not enabled. */
   history?: { s3: S3Like; bucket: string; now: () => Date; model: string; retryDelays?: number[] };
   /** Progress photos. Production only. */
@@ -146,8 +146,20 @@ export function createApp(deps: AppDeps): Hono<Env> {
         contextLoaded = false;
       }
     }
+    // Images attached in the chat box: at most 4, each a small JPEG or PNG under 600 KB.
+    const attachments = Array.isArray(fields.attachments) ? fields.attachments : [];
+    if (attachments.length > 4) return c.json({ error: "Attach at most 4 images" }, 400);
+    const images: ImageInput[] = [];
+    for (const a of attachments) {
+      const item = a as Record<string, unknown>;
+      const format = item.format === "png" ? "png" : item.format === "jpeg" ? "jpeg" : null;
+      if (!format || typeof item.data_base64 !== "string") return c.json({ error: "Attachments must be jpeg or png images" }, 400);
+      const bytes = new Uint8Array(Buffer.from(item.data_base64, "base64"));
+      if (bytes.length === 0 || bytes.length > 600 * 1024) return c.json({ error: "Each attached image must be under 600 KB" }, 400);
+      images.push({ format, bytes });
+    }
     try {
-      const result = await deps.ask(question.trim(), context);
+      const result = await deps.ask(question.trim(), context, images);
       const subject = typeof fields.subject === "string" && fields.subject.trim() ? fields.subject.trim().slice(0, 80) : subjectFrom(question);
       const turn: TurnRecord = {
         schema: 1,
@@ -161,6 +173,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
         model: deps.history?.model ?? "",
         rounds: result.rounds,
         queries: result.queries.map((q) => ({ sql: q.sql, ok: q.ok, row_count: q.row_count, bytes_scanned: q.bytes_scanned, ...(q.error ? { error: q.error } : {}), columns: q.columns ?? [], rows: q.rows ?? [] })),
+        ...(result.photos_shown?.length ? { photo_ids: result.photos_shown } : {}),
       };
       if (!deps.history) {
         return c.json({ answer: result.answer, queries: result.queries.map(({ rows: _rows, columns: _columns, ...q }) => q), rounds: result.rounds, conversation_id: conversationId, history_enabled: false, context_loaded: contextLoaded });
@@ -269,6 +282,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
       answer = await deps.photos.compare({ ids: body.ids, question: body.question });
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
+      if (error instanceof Error && error.name === "PhotoComparePausedError") return c.json({ error: message }, 503);
       if (/choose|must be|not found/i.test(message)) return c.json({ error: message }, 400);
       console.error("Photo comparison failed", error instanceof Error ? error.name : "unknown");
       return c.json({ error: "The comparison could not be made. Try again." }, 502);

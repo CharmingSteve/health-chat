@@ -27,6 +27,7 @@ export function systemPrompt(): string {
     "13. Medications: a brand name is not a food or a supplement. Before answering about a brand, search the medical documents: SELECT source_key, text FROM medical_documents WHERE lower(text) LIKE '%brand%' (use the lower-case brand name). Quote the document's ingredient list. A brand can contain more than one ingredient, and stopping one brand does not stop an ingredient that another brand still contains. The documents may be out of date, so say what the owner has told you about current doses.",
     "14. Forecasts: never predict a future lab value, a score, or an outcome. Describe the past values, their dates, the reference range, and when the next test is due, and suggest asking the doctor. An A1C reflects roughly the last 2 to 3 months, so a single week of diet entries cannot change the next value in a way that can be predicted from these tables.",
     "17. Completeness: complete means the whole day's intake is known, and net calories are reliable (net_reliable=true). partial means the intake is not a whole-day total: do not give a net for it, and say it is partial. missing means nothing was logged: never treat it as zero.  Leave partial and missing days out of totals and averages unless the owner asks, and say how many were left out.",
+    "22. Photos: use list_photos to find them and show_photos to see them (up to 4 at a time). Describe only what is visible, photo by photo, with the date and setting given in the record. Do not guess what a photo shows; if you cannot see it clearly, say so. Body estimates are visual estimates with a range and a confidence, never measurements. For injuries, describe what is visible; for severe signs, say to seek urgent care now.",
     "21. The verified diet figures block in the message is computed by the database for this question. Quote its totals, counts, and averages exactly. Do not recompute them; if you need a figure it does not contain, query it.",
     "16b. Compute every total, average, and count with SQL (SUM, AVG, COUNT), never by adding numbers in your head. Quote the figure from the query result.",
     "16a. Net for a day = intake minus burn. Intake is the sum of diet_entries.calories for that day (skip superseded rows). Burn is burn_effective from diet_days. Compute both in one query, for example: SELECT d.day, d.completeness, SUM(e.calories) - d.burn_effective AS net FROM diet_days d JOIN diet_entries e ON e.day = d.day AND NOT e.superseded GROUP BY d.day, d.completeness, d.burn_effective. Never report the intake alone as net.",
@@ -45,7 +46,7 @@ export function systemPrompt(): string {
   ].join("\n");
 }
 
-export interface ModelToolUse { toolUseId: string; name: string; input: { sql?: unknown } }
+export interface ModelToolUse { toolUseId: string; name: string; input: { sql?: unknown; ids?: unknown } }
 export type ModelTurn =
   | { kind: "text"; text: string }
   | { kind: "tool_use"; text: string; toolUses: ModelToolUse[] };
@@ -53,24 +54,43 @@ export type ModelTurn =
 /** One model call. messages and the reply use the Converse message shape. */
 export type CallModel = (messages: unknown[]) => Promise<ModelTurn>;
 
+export interface ImageInput {
+  format: "jpeg" | "png";
+  bytes: Uint8Array;
+  label?: string;
+}
+
+/** Photos the chat can list and view. Viewing loads the small analysis copy (no location). */
+export interface PhotoAccess {
+  list: () => Promise<{ id: string; date_taken: string; setting: string | null; place: string | null }[]>;
+  load: (ids: string[]) => Promise<{ id: string; date_taken: string; image: ImageInput }[]>;
+}
+
+export const MAX_IMAGES_PER_ANSWER = 4;
+
 export interface ChatDeps {
   callModel: CallModel;
   runQuery: (sql: string) => Promise<QueryResult>;
+  photos?: PhotoAccess;
 }
 
 export interface ChatAnswer {
   answer: string;
+  photos_shown?: string[];
   queries: { sql: string; ok: boolean; row_count: number; error?: string; bytes_scanned: number; columns: string[]; rows: (string | null)[][] }[];
   rounds: number;
 }
 
-export async function answerQuestion(question: string, deps: ChatDeps, context = ""): Promise<ChatAnswer> {
+export async function answerQuestion(question: string, deps: ChatDeps, context = "", attached: ImageInput[] = []): Promise<ChatAnswer> {
   const text = context ? `${context}\n\nCurrent question: ${question}` : question;
-  const messages: unknown[] = [{ role: "user", content: [{ text }] }];
+  if (attached.length > MAX_IMAGES_PER_ANSWER) throw new Error(`Attach at most ${MAX_IMAGES_PER_ANSWER} images`);
+  const attachedBlocks = attached.map((img) => ({ image: { format: img.format, source: { bytes: img.bytes } } }));
+  const messages: unknown[] = [{ role: "user", content: [...attachedBlocks, { text }] }];
   const queries: ChatAnswer["queries"] = [];
+  const photosShown: string[] = [];
   for (let round = 1; round <= MAX_ROUNDS; round += 1) {
     const turn = await deps.callModel(messages);
-    if (turn.kind === "text") return { answer: turn.text, queries, rounds: round };
+    if (turn.kind === "text") return { answer: turn.text, queries, rounds: round, ...(photosShown.length ? { photos_shown: [...new Set(photosShown)] } : {}) };
     messages.push({
       role: "assistant",
       content: [
@@ -81,6 +101,12 @@ export async function answerQuestion(question: string, deps: ChatDeps, context =
     const results = [];
     for (const use of turn.toolUses) {
       const sql = typeof use.input.sql === "string" ? use.input.sql : "";
+      if (use.name === "list_photos" || use.name === "show_photos") {
+        const shown = await photoToolResult(use, deps);
+        results.push(shown.result);
+        photosShown.push(...shown.ids);
+        continue;
+      }
       const result = use.name === "query_data" && sql ? await deps.runQuery(sql) : failedResult("Unknown tool or missing sql");
       queries.push({ sql: result.sql_run || sql, ok: result.ok, row_count: result.row_count, bytes_scanned: result.bytes_scanned, columns: result.columns, rows: result.rows, ...(result.error ? { error: result.error } : {}) });
       results.push({
@@ -104,8 +130,45 @@ function failedResult(error: string): QueryResult {
   return { ok: false, columns: [], rows: [], row_count: 0, truncated: false, bytes_scanned: 0, sql_run: "", error };
 }
 
+async function photoToolResult(use: ModelToolUse, deps: ChatDeps): Promise<{ result: { toolResult: { toolUseId: string; content: unknown[]; status: string } }; ids: string[] }> {
+  const fail = (error: string) => ({ result: { toolResult: { toolUseId: use.toolUseId, content: [{ json: { error } }], status: "error" } }, ids: [] });
+  if (!deps.photos) return fail("Photos are not available here");
+  if (use.name === "list_photos") {
+    return { result: { toolResult: { toolUseId: use.toolUseId, content: [{ json: { photos: await deps.photos.list() } }], status: "success" } }, ids: [] };
+  }
+  const ids = Array.isArray(use.input.ids) ? use.input.ids.filter((i): i is string => typeof i === "string") : [];
+  if (ids.length === 0 || ids.length > MAX_IMAGES_PER_ANSWER) return fail(`Choose 1 to ${MAX_IMAGES_PER_ANSWER} photo ids`);
+  const loaded = await deps.photos.load(ids);
+  const meta = loaded.map((p) => ({ id: p.id, date_taken: p.date_taken }));
+  // The images travel with the tool result, so the model sees them in this turn.
+  return {
+    result: {
+      toolResult: {
+        toolUseId: use.toolUseId,
+        content: [{ json: { shown: meta } }, ...loaded.map((p) => ({ image: { format: p.image.format, source: { bytes: p.image.bytes } } }))],
+        status: "success",
+      },
+    },
+    ids: loaded.map((p) => p.id),
+  };
+}
+
 export const QUERY_TOOL = {
   tools: [
+    {
+      toolSpec: {
+        name: "list_photos",
+        description: "List the owner's progress photos: id, date taken, setting, and place. Use before show_photos.",
+        inputSchema: { json: { type: "object", properties: {} } },
+      },
+    },
+    {
+      toolSpec: {
+        name: "show_photos",
+        description: "Show up to 4 progress photos (by id) to you as images, with their dates. Describe only what is visible.",
+        inputSchema: { json: { type: "object", properties: { ids: { type: "array", items: { type: "string" }, maxItems: 4 } }, required: ["ids"] } },
+      },
+    },
     {
       toolSpec: {
         name: "query_data",
