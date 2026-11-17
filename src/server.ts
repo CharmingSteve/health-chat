@@ -6,6 +6,7 @@ import { createApp } from "./app.js";
 import { answerQuestion } from "./chat.js";
 import { athenaRunner } from "./query.js";
 import { createChatModel } from "./bedrock.js";
+import { S3Client } from "@aws-sdk/client-s3";
 
 // Web Functions give the server its host and port in AWS_LAMBDA_HTTP_ENDPOINT (host:port).
 // Locally the fallback is used.
@@ -31,11 +32,17 @@ const cognitoDomain = required("COGNITO_DOMAIN");
 const dataEnabled = process.env.DATA_ENABLED === "true";
 const modelId = required("BEDROCK_MODEL");
 const ask = dataEnabled
-  ? (question: string) =>
+  ? (question: string, context: string) =>
       answerQuestion(question, {
         callModel: createChatModel(modelId),
         runQuery: athenaRunner({ workgroup: required("ATHENA_WORKGROUP"), database: required("GLUE_DATABASE") }),
-      })
+      }, context)
+  : undefined;
+
+// Chat history is written straight to S3, in the same environments that can read data.
+const logsBucket = process.env.LOGS_BUCKET;
+const history = dataEnabled && logsBucket
+  ? { s3: new S3Client({}), bucket: logsBucket, now: () => new Date(), model: modelId }
   : undefined;
 
 const app = createApp({
@@ -44,6 +51,7 @@ const app = createApp({
   ...(smokeClientId ? { smokeClientId } : {}),
   converse: createConverse(modelId),
   ...(ask ? { ask } : {}),
+  ...(history ? { history } : {}),
   browserConfig: { domain: cognitoDomain, clientId },
   publicDir: resolve(import.meta.dirname, "..", "public"),
 });

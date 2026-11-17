@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { templateDefault } from "./lib.mjs";
+import { ensureBucket } from "./ensure-bucket.mjs";
 
 // Usage: node scripts/deploy.mjs staging|production   (run from the repo root, with AWS_PROFILE/creds set)
 const environment = process.argv[2];
@@ -53,6 +54,9 @@ const callback = stacks.some(({ StackName }) => StackName === stack)
 
 // Table definitions (Glue) and the read-only Athena workgroup. Same in both environments; only production may read them.
 const TABLES_BUCKET = "health-chat-tables-570989156105-us-east-1-an";
+// Chat history. Never expires: no lifecycle rules are set on this bucket.
+const LOGS_BUCKET = "health-chat-logs-570989156105-us-east-1-an";
+ensureBucket(LOGS_BUCKET);
 deploy("infra/data.yaml", "health-chat-data", [`TablesBucket=${TABLES_BUCKET}`]);
 
 deploy("infra/artifacts.yaml", artifactsStack);
@@ -78,6 +82,7 @@ deploy(
     `SmokeClientId=${authentication.SmokeClientId}`,
     `DataEnabled=${environment === "production" ? "true" : "false"}`,
     `TablesBucket=${TABLES_BUCKET}`,
+    `LogsBucket=${LOGS_BUCKET}`,
   ],
   true,
 );

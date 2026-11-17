@@ -50,12 +50,13 @@ export interface ChatDeps {
 
 export interface ChatAnswer {
   answer: string;
-  queries: { sql: string; ok: boolean; row_count: number; error?: string; bytes_scanned: number }[];
+  queries: { sql: string; ok: boolean; row_count: number; error?: string; bytes_scanned: number; columns: string[]; rows: (string | null)[][] }[];
   rounds: number;
 }
 
-export async function answerQuestion(question: string, deps: ChatDeps): Promise<ChatAnswer> {
-  const messages: unknown[] = [{ role: "user", content: [{ text: question }] }];
+export async function answerQuestion(question: string, deps: ChatDeps, context = ""): Promise<ChatAnswer> {
+  const text = context ? `${context}\n\nCurrent question: ${question}` : question;
+  const messages: unknown[] = [{ role: "user", content: [{ text }] }];
   const queries: ChatAnswer["queries"] = [];
   for (let round = 1; round <= MAX_ROUNDS; round += 1) {
     const turn = await deps.callModel(messages);
@@ -71,7 +72,7 @@ export async function answerQuestion(question: string, deps: ChatDeps): Promise<
     for (const use of turn.toolUses) {
       const sql = typeof use.input.sql === "string" ? use.input.sql : "";
       const result = use.name === "query_data" && sql ? await deps.runQuery(sql) : failedResult("Unknown tool or missing sql");
-      queries.push({ sql: result.sql_run || sql, ok: result.ok, row_count: result.row_count, bytes_scanned: result.bytes_scanned, ...(result.error ? { error: result.error } : {}) });
+      queries.push({ sql: result.sql_run || sql, ok: result.ok, row_count: result.row_count, bytes_scanned: result.bytes_scanned, columns: result.columns, rows: result.rows, ...(result.error ? { error: result.error } : {}) });
       results.push({
         toolResult: {
           toolUseId: use.toolUseId,

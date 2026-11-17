@@ -87,6 +87,20 @@ The legacy master CSV is read from `legacy-master/` in the diet bucket. It is no
 - Do not change a source file after upload to fix a value. Fix it in the source (re-export or re-scan), then re-run the import.
 - If an import stops with an error, some tables may already have been rebuilt and others not. Fix the cause in the source, then re-run the same import; it rebuilds every table from the sources.
 
+## Chat history
+
+Every question and answer is saved in `health-chat-logs-570989156105-us-east-1-an`, written directly by the app (no proxy).
+
+- **What is kept:** each turn is one object: question, answer, the SQL run, and the result rows (up to 500 per query), with the time and the model. Layout: `chats/<chat id>/<time>_<turn id>.json`. A small `activity/<chat id>.json` holds each chat's subject and last time, and is overwritten per turn.
+- **Never deleted:** the app has no delete permission on this bucket, the bucket keeps every version, and it has no lifecycle rules.
+- **Saving:** the answer is shown straight away. The server retries the save four times (about 12 seconds). If that fails, the page resends the turn every 15 seconds for about five minutes. If it still fails, the turn is kept in this browser and resent the next time you open the page. Until it is saved, a banner says so.
+- **The list:** "Chats from the last 4 months" shows chats whose last question is within 120 days. An older chat drops off the list when it has not been used for 4 months, but it stays in the bucket and reopens if you use it again.
+- **Context for new questions:** the last six turns are sent with an excerpt of each answer, and earlier questions in the same chat are listed by text. The total is capped at 6,000 characters. Earlier answers are labelled as possibly out of date, so the model re-runs SQL for figures.
+- **Where it is enabled:** production only. Staging has no history.
+- `scripts/ask-local.ts` does not save history; it is for checks only.
+
+Health content is in these records, so treat the bucket like the others: private, with no public access.
+
 ## Setup and commands
 
 Requirements: Node.js 24, AWS CLI v2, the `click` profile.

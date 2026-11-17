@@ -30,6 +30,9 @@ Parameters:
   TablesBucket:
     Type: String
     Description: Bucket holding warehouse/<table>/data.parquet and athena-results/
+  LogsBucket:
+    Type: String
+    Description: Chat history bucket (chats/ and activity/). Created by scripts/ensure-bucket.mjs.
 Conditions:
   DataOn: !Equals [!Ref DataEnabled, "true"]
 Resources:
@@ -102,6 +105,15 @@ Resources:
           - Effect: Allow
             Action: [s3:GetObject, s3:PutObject]
             Resource: !Sub arn:${AWS::Partition}:s3:::${TablesBucket}/athena-results/*
+          # Chat history: write and read every turn. No delete permission, so nothing can be removed by the app.
+          - Effect: Allow
+            Action: [s3:GetObject, s3:PutObject]
+            Resource:
+              - !Sub arn:${AWS::Partition}:s3:::${LogsBucket}/chats/*
+              - !Sub arn:${AWS::Partition}:s3:::${LogsBucket}/activity/*
+          - Effect: Allow
+            Action: [s3:ListBucket]
+            Resource: !Sub arn:${AWS::Partition}:s3:::${LogsBucket}
   WebFunction:
     Type: AWS::Lambda::WebFunction
     Properties:
@@ -134,6 +146,7 @@ Resources:
           COGNITO_CLIENT_ID: !Ref CognitoClientId
           SMOKE_CLIENT_ID: !Ref SmokeClientId
           DATA_ENABLED: !Ref DataEnabled
+          LOGS_BUCKET: !Ref LogsBucket
           ATHENA_WORKGROUP: health-chat-data
           GLUE_DATABASE: health_chat
       BuildConfig:

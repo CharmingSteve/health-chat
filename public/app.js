@@ -134,6 +134,145 @@ function renderQueries(queries) {
   box.append(details);
 }
 
+// ---- Chat history ------------------------------------------------------------------------------
+// The current chat is identified by conversation_id. Turns the server could not save are kept in
+// localStorage and resent on each visit, so a failed save is not lost.
+const pendingKey = "health-chat.pendingSaves";
+let conversation = { id: null, subject: "" };
+const pendingTimers = new Map();
+
+function newConversationId() {
+  return crypto.randomUUID();
+}
+
+function loadPending() {
+  try { return JSON.parse(localStorage.getItem(pendingKey) || "[]"); } catch { return []; }
+}
+
+function storePending(list) {
+  try { localStorage.setItem(pendingKey, JSON.stringify(list)); } catch { /* storage may be unavailable */ }
+}
+
+function addPending(turn) {
+  const list = loadPending().filter((t) => t.turn_id !== turn.turn_id);
+  list.push(turn);
+  storePending(list);
+}
+
+function removePending(turnId) {
+  storePending(loadPending().filter((t) => t.turn_id !== turnId));
+}
+
+function showBanner(text) {
+  const banner = $("#save-banner");
+  banner.textContent = text;
+  banner.hidden = !text;
+}
+
+async function resendTurn(turn, attemptsLeft) {
+  try {
+    const response = await api("/api/history/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(turn),
+    });
+    if (response.ok) {
+      removePending(turn.turn_id);
+      clearTimeout(pendingTimers.get(turn.turn_id));
+      pendingTimers.delete(turn.turn_id);
+      showBanner(loadPending().length ? "Some answers are still not saved; they will be retried." : "");
+      return;
+    }
+  } catch {
+    // Network or sign-in problem: try again on the next round.
+  }
+  if (attemptsLeft > 1) {
+    const timer = setTimeout(() => resendTurn(turn, attemptsLeft - 1), 15000);
+    pendingTimers.set(turn.turn_id, timer);
+  } else {
+    showBanner("An answer could not be saved to your history. It is kept in this browser and will be retried when you next open the page.");
+  }
+}
+
+function renderTurn(turn) {
+  const wrap = document.createElement("div");
+  wrap.className = "turn";
+  const q = document.createElement("div");
+  q.className = "q";
+  q.textContent = turn.question;
+  const a = document.createElement("div");
+  a.className = "a";
+  a.textContent = turn.answer;
+  wrap.append(q, a);
+  if (turn.queries && turn.queries.length) {
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = `Queries run (${turn.queries.length})`;
+    details.append(summary);
+    for (const query of turn.queries) {
+      const pre = document.createElement("pre");
+      pre.className = "sql";
+      pre.textContent = `${query.ok ? `${query.row_count} rows` : `Failed: ${query.error}`}\n${query.sql}`;
+      details.append(pre);
+    }
+    wrap.append(details);
+  }
+  return wrap;
+}
+
+async function openConversation(id) {
+  const response = await api(`/api/history/${id}`);
+  if (!response.ok) {
+    showBanner("That chat could not be opened.");
+    return;
+  }
+  const body = await response.json();
+  const turns = body.turns || [];
+  conversation = { id, subject: turns[0]?.subject || "" };
+  $("#chat-title").textContent = conversation.subject || "Chat";
+  const thread = $("#thread");
+  thread.replaceChildren(...turns.map(renderTurn));
+  $("#answer").textContent = "";
+  renderQueries([]);
+}
+
+function startNewChat() {
+  conversation = { id: null, subject: "" };
+  $("#chat-title").textContent = "New chat";
+  $("#thread").replaceChildren();
+  $("#answer").textContent = "";
+  renderQueries([]);
+}
+
+async function loadChatList() {
+  const list = $("#chat-list");
+  try {
+    const response = await api("/api/history");
+    if (!response.ok) {
+      list.replaceChildren(Object.assign(document.createElement("li"), { className: "muted", textContent: "History is not available here." }));
+      return;
+    }
+    const { conversations } = await response.json();
+    if (!conversations.length) {
+      list.replaceChildren(Object.assign(document.createElement("li"), { className: "muted", textContent: "No chats in the last 4 months yet." }));
+      return;
+    }
+    list.replaceChildren(...conversations.map((c) => {
+      const li = document.createElement("li");
+      const link = document.createElement("a");
+      link.textContent = c.subject;
+      link.addEventListener("click", () => openConversation(c.conversation_id));
+      const when = document.createElement("span");
+      when.className = "muted";
+      when.textContent = `  ${new Date(c.last_asked_at).toLocaleDateString()}`;
+      li.append(link, when);
+      return li;
+    }));
+  } catch {
+    list.replaceChildren(Object.assign(document.createElement("li"), { className: "muted", textContent: "The list could not be loaded." }));
+  }
+}
+
 async function askQuestion(event) {
   event.preventDefault();
   const question = $("#question").value.trim();
@@ -145,10 +284,11 @@ async function askQuestion(event) {
   $("#answer").textContent = "";
   renderQueries([]);
   try {
+    if (!conversation.id) conversation = { id: newConversationId(), subject: question.slice(0, 80) };
     const response = await api("/api/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, conversation_id: conversation.id, subject: conversation.subject }),
     });
     const body = await response.json();
     if (!response.ok) {
@@ -156,6 +296,16 @@ async function askQuestion(event) {
     } else {
       $("#answer").textContent = body.answer;
       renderQueries(body.queries || []);
+      $("#thread").append(renderTurn({ question, answer: body.answer, queries: body.queries || [] }));
+      $("#chat-title").textContent = conversation.subject || "Chat";
+      if (body.history_enabled && body.saved === false && body.turn) {
+        addPending(body.turn);
+        showBanner("Your answer is shown, but it is not saved yet. Retrying.");
+        resendTurn(body.turn, 20);
+      } else if (body.history_enabled) {
+        showBanner("");
+        loadChatList();
+      }
     }
     status.textContent = "";
   } catch (error) {
@@ -171,6 +321,8 @@ async function start() {
   $("#sign-out").addEventListener("click", signOut);
   $("#run-smoke").addEventListener("click", runModelCheck);
   $("#ask-form").addEventListener("submit", askQuestion);
+  $("#new-chat").addEventListener("click", startNewChat);
+  for (const turn of loadPending()) resendTurn(turn, 20);
   try {
     await finishSignIn();
   } catch (error) {
@@ -187,6 +339,7 @@ async function start() {
   show($("#sign-in"), !stillSignedIn);
   show($("#sign-out"), stillSignedIn);
   show($("#app"), stillSignedIn);
+  if (stillSignedIn) loadChatList();
   $("#status").textContent = stillSignedIn ? "Signed in." : "Not signed in.";
 }
 

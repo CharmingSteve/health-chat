@@ -5,6 +5,8 @@ import { errors, type JWTPayload } from "jose";
 import type { VerifiedUser } from "./auth.js";
 import { SMOKE_PROMPT, smokeReplyIsCorrect, type Converse } from "./bedrock.js";
 import type { ChatAnswer } from "./chat.js";
+import { buildContext, isValidId, listConversations, readConversation, saveTurn, subjectFrom, type S3Like, type TurnRecord } from "./history.js";
+import { randomUUID } from "node:crypto";
 
 export interface AppDeps {
   /** Verifies a bearer token. Throws a jose error for bad tokens, anything else for service failures. */
@@ -14,7 +16,9 @@ export interface AppDeps {
   smokeClientId?: string;
   converse: Converse;
   /** Answers a data question. Absent in environments where the data is not enabled. */
-  ask?: (question: string) => Promise<ChatAnswer>;
+  ask?: (question: string, context: string) => Promise<ChatAnswer>;
+  /** Chat history in S3 (production only). Absent where history is not enabled. */
+  history?: { s3: S3Like; bucket: string; now: () => Date; model: string; retryDelays?: number[] };
   /** Public browser config. Client ids and the hosted-UI domain are not secrets. */
   browserConfig: { domain: string; clientId: string };
   publicDir: string;
@@ -98,14 +102,96 @@ export function createApp(deps: AppDeps): Hono<Env> {
     } catch {
       return c.json({ error: "Send JSON with a question" }, 400);
     }
-    const question = typeof body === "object" && body !== null ? (body as { question?: unknown }).question : undefined;
-    if (typeof question !== "string" || question.trim().length === 0) return c.json({ error: "Question is required" }, 400);
+    const fields = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+    const question = typeof fields.question === "string" ? fields.question : undefined;
+    if (question === undefined || question.trim().length === 0) return c.json({ error: "Question is required" }, 400);
     if (question.length > 1000) return c.json({ error: "Question is too long (1000 characters at most)" }, 400);
+    const requestedId = typeof fields.conversation_id === "string" ? fields.conversation_id : undefined;
+    if (requestedId !== undefined && !isValidId(requestedId)) return c.json({ error: "Bad conversation id" }, 400);
+    const conversationId = requestedId ?? randomUUID();
+
+    // Earlier turns of the same chat give the model its context. If they cannot be read, the question is still answered.
+    let context = "";
+    let contextLoaded = true;
+    if (requestedId && deps.history) {
+      try {
+        context = buildContext(await readConversation(deps.history.s3, deps.history.bucket, conversationId));
+      } catch {
+        contextLoaded = false;
+      }
+    }
     try {
-      return c.json(await deps.ask(question.trim()));
+      const result = await deps.ask(question.trim(), context);
+      const subject = typeof fields.subject === "string" && fields.subject.trim() ? fields.subject.trim().slice(0, 80) : subjectFrom(question);
+      const turn: TurnRecord = {
+        schema: 1,
+        owner: "owner",
+        conversation_id: conversationId,
+        turn_id: randomUUID(),
+        asked_at: (deps.history?.now() ?? new Date()).toISOString(),
+        subject,
+        question: question.trim(),
+        answer: result.answer,
+        model: deps.history?.model ?? "",
+        rounds: result.rounds,
+        queries: result.queries.map((q) => ({ sql: q.sql, ok: q.ok, row_count: q.row_count, bytes_scanned: q.bytes_scanned, ...(q.error ? { error: q.error } : {}), columns: q.columns ?? [], rows: q.rows ?? [] })),
+      };
+      if (!deps.history) {
+        return c.json({ answer: result.answer, queries: result.queries.map(({ rows: _rows, columns: _columns, ...q }) => q), rounds: result.rounds, conversation_id: conversationId, history_enabled: false, context_loaded: contextLoaded });
+      }
+      // Answer first; the save is reported next to it. The page resends an unsaved turn with /api/history/save.
+      const save = await saveTurn(deps.history.s3, deps.history.bucket, turn, deps.history.retryDelays);
+      return c.json({
+        answer: result.answer,
+        // Rows stay in the saved turn; the page gets the SQL and counts only.
+        queries: result.queries.map(({ rows: _rows, columns: _columns, ...q }) => q),
+        rounds: result.rounds,
+        conversation_id: conversationId,
+        turn_id: turn.turn_id,
+        subject: turn.subject,
+        history_enabled: true,
+        context_loaded: contextLoaded,
+        saved: save.saved,
+        ...(save.saved ? {} : { save_error: save.error ?? "unknown", turn }),
+      });
     } catch (error) {
       console.error("Chat failed", error instanceof Error ? error.name : "unknown");
       return c.json({ error: "The assistant could not answer. Try again." }, 502);
+    }
+  });
+
+  // Resend a turn that could not be saved. The turn is checked before it is written.
+  app.post("/api/history/save", async (c) => {
+    if (!deps.history) return c.json({ error: "History is not enabled in this environment" }, 503);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Send the turn as JSON" }, 400);
+    }
+    const turn = checkTurn(body);
+    if (!turn) return c.json({ error: "Not a valid turn record" }, 400);
+    const save = await saveTurn(deps.history.s3, deps.history.bucket, turn, deps.history.retryDelays);
+    return c.json(save, save.saved ? 200 : 503);
+  });
+
+  app.get("/api/history", async (c) => {
+    if (!deps.history) return c.json({ error: "History is not enabled in this environment" }, 503);
+    try {
+      return c.json({ conversations: await listConversations(deps.history.s3, deps.history.bucket, deps.history.now()) });
+    } catch {
+      return c.json({ error: "History could not be read. Try again." }, 503);
+    }
+  });
+
+  app.get("/api/history/:id", async (c) => {
+    if (!deps.history) return c.json({ error: "History is not enabled in this environment" }, 503);
+    const id = c.req.param("id");
+    if (!isValidId(id)) return c.json({ error: "Bad conversation id" }, 400);
+    try {
+      return c.json({ conversation_id: id, turns: await readConversation(deps.history.s3, deps.history.bucket, id) });
+    } catch {
+      return c.json({ error: "History could not be read. Try again." }, 503);
     }
   });
 
@@ -116,4 +202,27 @@ export function createApp(deps: AppDeps): Hono<Env> {
   });
 
   return app;
+}
+
+/** Checks the shape of a turn sent back by the page. Only the fields the app writes are kept. */
+function checkTurn(body: unknown): TurnRecord | undefined {
+  if (typeof body !== "object" || body === null) return undefined;
+  const t = body as Record<string, unknown>;
+  const str = (v: unknown, max: number) => typeof v === "string" && v.length <= max;
+  if (!isValidId(String(t.conversation_id ?? "")) || !isValidId(String(t.turn_id ?? ""))) return undefined;
+  if (!str(t.question, 1000) || !str(t.answer, 20000) || !str(t.subject, 80) || !str(t.asked_at, 40)) return undefined;
+  if (!Array.isArray(t.queries) || t.queries.length > 20) return undefined;
+  return {
+    schema: 1,
+    owner: "owner",
+    conversation_id: String(t.conversation_id),
+    turn_id: String(t.turn_id),
+    asked_at: String(t.asked_at),
+    subject: String(t.subject),
+    question: String(t.question),
+    answer: String(t.answer),
+    model: str(t.model, 200) ? String(t.model) : "",
+    rounds: typeof t.rounds === "number" ? t.rounds : 0,
+    queries: t.queries as TurnRecord["queries"],
+  };
 }

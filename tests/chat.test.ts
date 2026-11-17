@@ -26,7 +26,7 @@ describe("answerQuestion", () => {
     expect(runQuery).toHaveBeenCalledWith(sql);
     expect(out).toEqual({
       answer: "There are 3 lab rows.",
-      queries: [{ sql, ok: true, row_count: 1, bytes_scanned: 4060 }],
+      queries: [{ sql, ok: true, row_count: 1, bytes_scanned: 4060, columns: ["n"], rows: [["3"]] }],
       rounds: 2,
     });
   });
