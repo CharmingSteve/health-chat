@@ -1,13 +1,9 @@
 import { S3Client } from "@aws-sdk/client-s3";
-import { comparePhotos, type PhotoForModel } from "./compare.js";
+import { comparePhotos, MAX_COMPARE_PHOTOS, type PhotoForModel } from "./compare.js";
 import { MAX_IMAGES_PER_ANSWER, type PhotoAccess } from "./chat.js";
-import { analysisKey, analysisKeyFor, isOriginalType, listPhotos, newPhotoId, originalKey, PHOTO_MAX_BYTES, readBytes, savePhotoMeta, todayIn, uploadForm, validateDateTaken, validateMeta, OWNER_TIMEZONE, type PhotoMeta } from "./photos.js";
+import { analysisKey, analysisKeyFor, isOriginalType, isValidPhotoId, listPhotos, newPhotoId, originalKey, PHOTO_MAX_BYTES, readBytes, savePhotoMeta, todayIn, uploadForm, validateDateTaken, validateMeta, OWNER_TIMEZONE, type PhotoMeta } from "./photos.js";
 
-/**
- * Comparisons are paused because model descriptions did not match the photos.
- * Turn back on only after that is fixed and checked.
- */
-export const PHOTO_COMPARE_ENABLED = false;
+export const PHOTO_COMPARE_ENABLED = true;
 
 export class PhotoComparePausedError extends Error {
   constructor() {
@@ -56,10 +52,14 @@ export function photoService(opts: { s3: S3Client; photosBucket: string; modelId
     },
     async compare(input) {
       if (!PHOTO_COMPARE_ENABLED) throw new PhotoComparePausedError();
-      if (!Array.isArray(input.ids) || input.ids.some((i) => typeof i !== "string")) throw new Error("ids must be a list of photo ids");
+      const ids = input.ids;
+      if (!Array.isArray(ids) || !ids.every((id): id is string => typeof id === "string" && isValidPhotoId(id))) throw new Error("ids must be a list of photo ids");
+      if (ids.length < 2) throw new Error("Choose at least two photos to compare");
+      if (ids.length > MAX_COMPARE_PHOTOS) throw new Error(`Choose at most ${MAX_COMPARE_PHOTOS} photos`);
+      if (new Set(ids).size !== ids.length) throw new Error("Choose distinct photos to compare");
       const all = await listPhotos(opts.s3, opts.photosBucket);
-      const chosen = all.filter((m) => (input.ids as string[]).includes(m.id));
-      if (chosen.length !== (input.ids as string[]).length) throw new Error("Some photos were not found");
+      const chosen = all.filter((m) => ids.includes(m.id));
+      if (chosen.length !== ids.length) throw new Error("Some photos were not found");
       const photos: PhotoForModel[] = [];
       for (const m of chosen) {
         // The analysis copy has no location data; the original is not sent to the model.

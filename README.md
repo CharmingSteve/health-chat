@@ -48,7 +48,7 @@ Every bucket is private, versioned, encrypted with AWS-managed keys, and blocks 
 - The date comes from the photo itself (the camera's capture date). If a photo has none, the file's date is used, and failing that, today. Each row shows where its date came from, and you can change it before uploading. A future date or one before 2000 is flagged, not blocked.
 - HEIC photos are decoded in the browser to make the analysis copy. If a HEIC can't be read in the browser, export a JPEG from Photos instead; nothing is uploaded for that file.
 - Each photo is stored in `health-chat-photos-570989156105-us-east-1-an`: the original as you took it (location and device details kept), and a smaller analysis copy made in the browser (re-encoded, so it carries no location). Nothing is deleted.
-- Photo comparison is paused while image descriptions are checked for reliability.
+- Select two to eight uploaded photos and press **Compare selected photos**. The app compares their analysis copies in date order, describes each photo before comparing, and saves the answer in the current chat (or starts a new one). It should state when lighting, pose, or unclear images prevent a reliable comparison.
 - Estimates are not measurements. Measured weights and body-composition readings are the reference.
 
 Manual checks (automated tests can't drag files):
