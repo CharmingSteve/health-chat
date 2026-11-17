@@ -7,6 +7,8 @@ export interface PhotoService {
   uploadForms(input: { date_taken?: unknown; original_type: unknown }): Promise<{ id: string; date_taken: string; original: unknown; analysis: unknown; max_bytes: number }>;
   save(input: unknown): Promise<PhotoMeta>;
   compare(input: { ids: unknown; question?: unknown }): Promise<string>;
+  /** The small analysis copy for a thumbnail. It carries no location. */
+  thumb(id: string): Promise<Uint8Array>;
 }
 
 /** Real service over S3 and Bedrock. Every date defaults to today, in the owner's timezone, unless a date is given. */
@@ -28,6 +30,11 @@ export function photoService(opts: { s3: S3Client; photosBucket: string; modelId
       const meta = validateMeta({ ...(input as object), original_key: (input as Record<string, unknown>).original_key, analysis_key: (input as Record<string, unknown>).analysis_key }, "owner");
       await savePhotoMeta(opts.s3, opts.photosBucket, meta);
       return meta;
+    },
+    async thumb(id) {
+      const found = (await listPhotos(opts.s3, opts.photosBucket)).find((m) => m.id === id);
+      if (!found) throw new Error("Photo not found");
+      return readBytes(opts.s3, opts.photosBucket, found.analysis_key);
     },
     async compare(input) {
       if (!Array.isArray(input.ids) || input.ids.some((i) => typeof i !== "string")) throw new Error("ids must be a list of photo ids");

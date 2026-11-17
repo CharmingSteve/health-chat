@@ -5,6 +5,7 @@ import { errors, type JWTPayload } from "jose";
 import type { VerifiedUser } from "./auth.js";
 import { SMOKE_PROMPT, smokeReplyIsCorrect, type Converse } from "./bedrock.js";
 import type { ChatAnswer } from "./chat.js";
+import { isValidPhotoId } from "./photos.js";
 import { buildContext, isValidId, listConversations, readConversation, saveTurn, subjectFrom, type S3Like, type TurnRecord } from "./history.js";
 import { randomUUID } from "node:crypto";
 
@@ -204,6 +205,18 @@ export function createApp(deps: AppDeps): Hono<Env> {
       return c.json({ photos: await deps.photos.list() });
     } catch {
       return c.json({ error: "Photos could not be read. Try again." }, 503);
+    }
+  });
+
+  app.get("/api/photos/:id/thumb", async (c) => {
+    if (!deps.photos) return c.json({ error: "Photos are not enabled in this environment" }, 503);
+    const id = c.req.param("id");
+    if (!isValidPhotoId(id)) return c.json({ error: "Bad photo id" }, 400);
+    try {
+      const bytes = await deps.photos.thumb(id);
+      return c.body(bytes as never, 200, { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=3600" });
+    } catch {
+      return c.json({ error: "Photo not found" }, 404);
     }
   });
 

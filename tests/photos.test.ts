@@ -37,6 +37,11 @@ describe("photo records", () => {
   it("keeps the owner's date, setting, and note", () => {
     expect(validateMeta(good, "owner")).toMatchObject({ date_taken: "2026-11-10", setting: "gym", note: null, owner: "owner" });
   });
+  it("keeps the location of the original, and rejects a location out of range", () => {
+    expect(validateMeta({ ...good, location: { lat: 31.7461234, lon: 35.2199999 } }, "owner").location).toEqual({ lat: 31.746123, lon: 35.22 });
+    expect(validateMeta({ ...good }, "owner").location).toBeNull();
+    expect(() => validateMeta({ ...good, location: { lat: 95, lon: 0 } }, "owner")).toThrow("out of range");
+  });
   it("refuses a record with a bad id, missing keys, or a long note", () => {
     expect(() => validateMeta({ ...good, id: "x" }, "owner")).toThrow("Bad photo id");
     expect(() => validateMeta({ ...good, analysis_key: undefined }, "owner")).toThrow("Missing object keys");

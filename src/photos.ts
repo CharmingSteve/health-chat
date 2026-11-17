@@ -23,6 +23,8 @@ export interface PhotoMeta {
   note: string | null;
   original_key: string;
   analysis_key: string;
+  /** Where the photo was taken, from the original file (kept private). Null when the photo has no location. */
+  location: { lat: number; lon: number } | null;
 }
 
 /** Today's date in the owner's timezone, as yyyy-mm-dd. */
@@ -100,7 +102,16 @@ export function validateMeta(input: unknown, owner: string): PhotoMeta {
     note: text(m.note, 500),
     original_key: m.original_key,
     analysis_key: m.analysis_key,
+    location: validateLocation(m.location),
   };
+}
+
+function validateLocation(value: unknown): { lat: number; lon: number } | null {
+  if (value === undefined || value === null) return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.lat !== "number" || typeof v.lon !== "number" || !Number.isFinite(v.lat) || !Number.isFinite(v.lon)) throw new Error("Bad location");
+  if (v.lat < -90 || v.lat > 90 || v.lon < -180 || v.lon > 180) throw new Error("Location out of range");
+  return { lat: Math.round(v.lat * 1e6) / 1e6, lon: Math.round(v.lon * 1e6) / 1e6 };
 }
 
 export async function savePhotoMeta(client: S3Client, bucket: string, meta: PhotoMeta): Promise<void> {

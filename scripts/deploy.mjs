@@ -59,7 +59,7 @@ const LOGS_BUCKET = "health-chat-logs-570989156105-us-east-1-an";
 ensureBucket(LOGS_BUCKET);
 // Progress photos: private, versioned, nothing deleted. Originals keep their location data; analysis copies do not.
 const PHOTOS_BUCKET = "health-chat-photos-570989156105-us-east-1-an";
-ensureBucket(PHOTOS_BUCKET);
+ensureBucket(PHOTOS_BUCKET, "us-east-1", { corsOrigins: ["https://*.lambda-web.us-east-1.on.aws", "http://localhost:3000"] });
 deploy("infra/data.yaml", "health-chat-data", [`TablesBucket=${TABLES_BUCKET}`]);
 
 deploy("infra/artifacts.yaml", artifactsStack);
