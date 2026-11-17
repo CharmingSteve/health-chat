@@ -180,3 +180,54 @@ describe("named exclusions", () => {
     expect(applyExclusions(rows).kept).toHaveLength(2);
   });
 });
+
+
+describe("buildDietDays (assumed burn)", () => {
+  const e = (day: string, superseded = false) => ({ source: "legacy" as const, owner: OWNER, day, occurred_at: null, display_name: "x", raw_text: null, calories: 100, quantity: null, unit: null, food_id: null, superseded });
+  it("assumes 2000 kcal for a tracked day with no recorded burn", async () => {
+    const { buildDietDays } = await import("../src/ingest/diet.js");
+    const days = buildDietDays([e("2026-01-10")], [], OWNER);
+    expect(days).toEqual([{ owner: OWNER, day: "2026-01-10", burn_total: null, burn_effective: 2000, burn_basis: "assumed_default", completeness: "unknown", net_reliable: false, eligibility: null, burn_source: null }]);
+  });
+  it("uses a recorded burn when the app wrote one (exercise above the default)", async () => {
+    const { buildDietDays } = await import("../src/ingest/diet.js");
+    const meta = [{ owner: OWNER, day: "2026-01-11", burn_total: 2650, burn_effective: 2650, burn_basis: "recorded" as const, completeness: "complete", eligibility: "tracked", burn_source: "recorded" }];
+    const [row] = buildDietDays([e("2026-01-11")], meta, OWNER);
+    expect(row).toMatchObject({ burn_total: 2650, burn_effective: 2650, burn_basis: "recorded" });
+  });
+  it("treats a stored burn equal to the default as assumed, since only burns above the default are written", async () => {
+    const { buildDietDays } = await import("../src/ingest/diet.js");
+    const meta = [{ owner: OWNER, day: "2026-01-14", burn_total: 2000, completeness: "complete", eligibility: "tracked", burn_source: "recorded" }];
+    const [row] = buildDietDays([e("2026-01-14")], meta, OWNER);
+    expect(row).toMatchObject({ burn_total: 2000, burn_effective: 2000, burn_basis: "assumed_default" });
+  });
+  it("does not treat a metadata row without a recorded source as recorded", async () => {
+    const { buildDietDays } = await import("../src/ingest/diet.js");
+    const meta = [{ owner: OWNER, day: "2026-01-12", burn_total: 2000, burn_effective: 2000, burn_basis: "recorded" as const, completeness: null, eligibility: null, burn_source: "default" }];
+    const [row] = buildDietDays([e("2026-01-12")], meta, OWNER);
+    expect(row).toMatchObject({ burn_effective: 2000, burn_basis: "assumed_default" });
+  });
+  it("includes no burn for a day with no entries (it was not tracked)", async () => {
+    const { buildDietDays } = await import("../src/ingest/diet.js");
+    expect(buildDietDays([e("2026-01-13", true)], [], OWNER)).toEqual([]);
+  });
+});
+
+describe("completeness and net reliability", () => {
+  const e = (day: string) => ({ source: "legacy" as const, owner: OWNER, day, occurred_at: null, display_name: "x", raw_text: null, calories: 100, quantity: null, unit: null, food_id: null, superseded: false });
+  it("marks legacy days unknown and not reliable for net", async () => {
+    const { buildDietDays } = await import("../src/ingest/diet.js");
+    const [row] = buildDietDays([e("2025-05-01")], [], OWNER);
+    expect(row).toMatchObject({ completeness: "unknown", net_reliable: false });
+  });
+  it("marks partial days not reliable, and complete days reliable", async () => {
+    const { buildDietDays } = await import("../src/ingest/diet.js");
+    const meta = [
+      { owner: OWNER, day: "2026-02-01", burn_total: 2000, completeness: "partial", eligibility: "tracked", burn_source: "default" },
+      { owner: OWNER, day: "2026-02-02", burn_total: 2000, completeness: "complete", eligibility: "tracked", burn_source: "recorded" },
+    ];
+    const rows = buildDietDays([e("2026-02-01"), e("2026-02-02")], meta, OWNER);
+    expect(rows.find((r) => r.day === "2026-02-01")).toMatchObject({ completeness: "partial", net_reliable: false });
+    expect(rows.find((r) => r.day === "2026-02-02")).toMatchObject({ completeness: "complete", net_reliable: true });
+  });
+});

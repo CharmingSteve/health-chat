@@ -104,6 +104,22 @@ describe("medication and forecast rules", () => {
   it("says combinations keep their ingredients, so stopping one brand does not stop an ingredient", () => {
     expect(prompt).toContain("stopping one brand does not stop an ingredient");
   });
+  it("uses burn_effective and labels assumed burns", () => {
+    expect(prompt).toContain("use burn_effective from diet_days");
+    expect(prompt).toContain("assumed_default");
+    expect(prompt).toContain("2000 kcal");
+  });
+  it("tells the model today's date and how dates work in Athena", () => {
+    expect(prompt).toContain("Today is 20");
+    expect(prompt).toContain("date_add('day', -30, current_date)");
+  });
+  it("defines net as intake minus burn, computed in one query", () => {
+    expect(prompt).toContain("Net for a day = intake minus burn");
+    expect(prompt).toContain("Never report the intake alone as net");
+  });
+  it("requires totals and averages to come from SQL", () => {
+    expect(prompt).toContain("with SQL (SUM, AVG, COUNT)");
+  });
   it("forbids predicting future lab values", () => {
     expect(prompt).toContain("never predict a future lab value");
   });

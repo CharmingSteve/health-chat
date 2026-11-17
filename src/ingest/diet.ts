@@ -18,10 +18,53 @@ export interface DietEntry {
 export interface DietDay {
   owner: string;
   day: string;
+  /** The burn the app recorded for the day, or null when none was recorded. */
   burn_total: number | null;
-  completeness: string | null;
+  /** The burn used for net calories: the recorded burn, or DEFAULT_BURN when none was recorded. */
+  burn_effective: number;
+  /** "recorded" when the owner's burn was written; "assumed_default" when DEFAULT_BURN is assumed. */
+  burn_basis: "recorded" | "assumed_default";
+  /** complete | partial | missing (from stuntman-diet), or unknown for days from the legacy master (no completeness recorded). */
+  completeness: string;
+  /** True only when the whole day's intake is known: completeness is complete. Net calories are reliable only then. */
+  net_reliable: boolean;
   eligibility: string | null;
   burn_source: string | null;
+}
+
+/** Day metadata as the app wrote it; buildDietDays adds the effective burn. */
+export type DietMeta = Omit<DietDay, "burn_effective" | "burn_basis" | "completeness" | "net_reliable"> & { completeness: string | null };
+
+/**
+ * The owner's rule: a day burns DEFAULT_BURN kilocalories unless a burn is recorded. Recorded burns are written only
+ * when they are above the default (exercise), so a day without one is an assumed default, not a missing value.
+ */
+export const DEFAULT_BURN = 2000;
+
+/**
+ * One row for every day that has a food or burn entry, and for every day the app has metadata for.
+ * Days with no entries at all are not included: they were not tracked, so no burn is assumed for them.
+ */
+export function buildDietDays(entries: DietEntry[], metaDays: DietMeta[], owner: string): DietDay[] {
+  const meta = new Map(metaDays.map((d) => [d.day, d]));
+  const tracked = new Set(entries.filter((e) => !e.superseded).map((e) => e.day));
+  for (const day of meta.keys()) tracked.add(day);
+  return [...tracked].sort().map((day) => {
+    const m = meta.get(day);
+    // A burn is written only when it is above the default (exercise). A stored burn equal to the default is the default.
+    const recorded = m !== undefined && m.burn_source === "recorded" && m.burn_total !== null && m.burn_total > DEFAULT_BURN;
+    return {
+      owner,
+      day,
+      burn_total: m?.burn_total ?? null,
+      burn_effective: recorded ? (m!.burn_total as number) : DEFAULT_BURN,
+      burn_basis: recorded ? "recorded" : "assumed_default",
+      completeness: m?.completeness ?? "unknown",
+      net_reliable: m?.completeness === "complete",
+      eligibility: m?.eligibility ?? null,
+      burn_source: m?.burn_source ?? null,
+    };
+  });
 }
 
 /** Converts one DynamoDB attribute value ({S:..}, {N:..}, {M:..}, ...) into a plain JS value. */
@@ -58,9 +101,9 @@ function optNumber(value: unknown): number | null {
  * Parses the JSON lines of one or more DynamoDB export data files.
  * Only "entry" (food and burn logs) and "day" (day metadata) items are kept; others are counted, not stored.
  */
-export function parseSnapshotLines(lines: Iterable<string>, owner: string): { entries: DietEntry[]; days: DietDay[]; skipped: number } {
+export function parseSnapshotLines(lines: Iterable<string>, owner: string): { entries: DietEntry[]; days: DietMeta[]; skipped: number } {
   const entries: DietEntry[] = [];
-  const days: DietDay[] = [];
+  const days: DietMeta[] = [];
   let skipped = 0;
   for (const line of lines) {
     if (line.trim() === "") continue;
