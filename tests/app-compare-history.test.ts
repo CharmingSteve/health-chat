@@ -62,11 +62,12 @@ describe("photo comparison in chat history", () => {
     expect(saved).toContain("Visual estimate");
   });
 
-  it("returns the answer without saving when no chat is open", async () => {
+  it("starts a new chat when none is open, saves the comparison there, and returns its id", async () => {
     const { app, s3 } = makeApp();
     const body = await (await compare(app, { ids: ["aaaaaaaa", "bbbbbbbb"] })).json();
-    expect(body).toMatchObject({ answer: expect.any(String), saved: false });
-    expect(s3.store.size).toBe(0);
+    expect(body).toMatchObject({ answer: expect.any(String), saved: true, conversation_id: expect.stringMatching(/^[0-9a-f-]{36}$/), subject: "Photo comparison" });
+    expect(s3.store.size).toBeGreaterThan(0);
+    expect([...s3.store.values()].join("\n")).toContain(body.conversation_id);
   });
 
   it("still shows the comparison when the save fails, and returns the turn so the page can resend it", async () => {

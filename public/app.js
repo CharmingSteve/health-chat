@@ -737,6 +737,8 @@ async function comparePhotos() {
       result.textContent = body.error || "The comparison failed.";
     } else {
       result.textContent = body.answer;
+      // The server starts a chat when none was open, and returns its id. Later questions continue that chat.
+      if (body.conversation_id) conversation = { id: body.conversation_id, subject: body.subject || conversation.subject };
       $("#thread").append(renderTurn({ question: `Compare ${ids.length} photos`, answer: body.answer, queries: [] }));
       $("#chat-title").textContent = conversation.subject || "Chat";
       if (body.history_enabled && body.saved === false && body.turn) {

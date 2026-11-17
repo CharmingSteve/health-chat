@@ -273,18 +273,19 @@ export function createApp(deps: AppDeps): Hono<Env> {
       console.error("Photo comparison failed", error instanceof Error ? error.name : "unknown");
       return c.json({ error: "The comparison could not be made. Try again." }, 502);
     }
-    // A comparison is a turn in the chat it was made from, so it is saved like any answer.
+    // A comparison is a turn in a chat, so it is saved like any answer. With no chat open (or an unknown one),
+    // a new chat is started, the same way /api/ask does.
+    if (!deps.history) return c.json({ answer, history_enabled: false, saved: false });
     const requestedId = typeof body.conversation_id === "string" ? body.conversation_id : undefined;
-    if (!deps.history || requestedId === undefined || !isValidId(requestedId)) {
-      return c.json({ answer, history_enabled: Boolean(deps.history), saved: false });
-    }
+    if (requestedId !== undefined && !isValidId(requestedId)) return c.json({ error: "Bad conversation id" }, 400);
+    const conversationId = requestedId ?? randomUUID();
     const ids = Array.isArray(body.ids) ? body.ids.length : 0;
     const asked = typeof body.question === "string" && body.question.trim() ? body.question.trim() : "";
     const subject = typeof body.subject === "string" && body.subject.trim() ? body.subject.trim().slice(0, 80) : "Photo comparison";
     const turn: TurnRecord = {
       schema: 1,
       owner: "owner",
-      conversation_id: requestedId,
+      conversation_id: conversationId,
       turn_id: randomUUID(),
       asked_at: deps.history.now().toISOString(),
       subject,
@@ -296,7 +297,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
     };
     const save = await saveTurn(deps.history.s3, deps.history.bucket, turn, deps.history.retryDelays);
     return c.json({
-      answer, conversation_id: requestedId, turn_id: turn.turn_id, subject: turn.subject,
+      answer, conversation_id: conversationId, turn_id: turn.turn_id, subject: turn.subject,
       history_enabled: true, saved: save.saved,
       ...(save.saved ? {} : { save_error: save.error ?? "unknown", turn }),
     });
