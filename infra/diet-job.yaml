@@ -59,6 +59,10 @@ Resources:
                   - !Sub arn:${AWS::Partition}:s3:::${DietBucket}/legacy-master/*
                   - !Sub arn:${AWS::Partition}:s3:::${DietBucket}/stuntman-production/*
               # Copies of the snapshot and the tables are written only under these prefixes. Nothing is deleted.
+              # Failed runs are sent to the dead-letter queue by Lambda, using this role.
+              - Effect: Allow
+                Action: [sqs:SendMessage]
+                Resource: !GetAtt DietJobDeadLetters.Arn
               - Effect: Allow
                 Action: [s3:PutObject]
                 Resource:
