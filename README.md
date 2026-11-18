@@ -73,6 +73,18 @@ To try a question from your machine, without the browser: `AWS_PROFILE=click AWS
 Retention rules on the tables bucket: old table versions are deleted after 30 days; Athena results after 7 days.
 Every bucket is private, versioned, encrypted with AWS-managed keys, and blocks public access.
 
+### Where imported data goes
+
+Once an import has read the source files from their bucket, the result is not kept in a conventional database. It is written back to S3 as **Parquet** files in the tables bucket, `health-chat-tables-570989156105-us-east-1-an`.
+
+**What Parquet is:** an open file format for tables of data. It stores each column together, compresses well, and keeps the column names and types inside the file. Query engines can therefore read only the columns a question needs, which keeps queries fast and cheap. Parquet files are read by tools, not by people; a text editor shows binary data.
+
+- **Layout**: one folder per table, `<table>/data.parquet`, under `diet/`, `apple/`, and the medical tables. The path comes from `tableLocation()` in `src/ingest/schemas.ts`, which is the single list of tables and columns.
+- **Ledgers**: `ledger/apple.json`, `ledger/diet.json`, and `ledger/medical.json` record the source files read and the row counts.
+- **Writers**: `src/ingest/diet-pipeline.ts`, `run-apple.ts`, and `run-medical.ts` upload the files. DuckDB runs in memory and is used only to build the Parquet files.
+- **Querying**: Glue tables over those folders (`infra/data.yaml`, generated from `schemas.ts`) let Athena run the chat's SQL. Query results go to `athena-results/` in the same bucket.
+- **Updates**: each import replaces the tables. Old versions are deleted after 30 days, and Athena results after 7 days.
+
 ## Progress photos
 
 - Drag photos into the photo section from Photos or Finder (Chrome or Safari on a Mac), or click the area to choose files. JPG, PNG, and HEIC are accepted, up to 20 files at a time, 10 MB each.
